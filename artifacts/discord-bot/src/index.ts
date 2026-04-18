@@ -5,7 +5,31 @@ import {
   EmbedBuilder,
   TextChannel,
 } from "discord.js";
+import axios from "axios";
 import { addAccount, popAccount, stockCount } from "./stock.js";
+
+async function getRobloxAvatarUrl(username: string): Promise<string | null> {
+  try {
+    // Step 1: resolve username → userId
+    const userRes = await axios.post(
+      "https://users.roblox.com/v1/usernames/users",
+      { usernames: [username], excludeBannedUsers: false },
+      { headers: { "Content-Type": "application/json" } }
+    );
+    const userId: number | undefined = userRes.data?.data?.[0]?.id;
+    if (!userId) return null;
+
+    // Step 2: fetch headshot thumbnail
+    const thumbRes = await axios.get(
+      "https://thumbnails.roblox.com/v1/users/avatar-headshot",
+      { params: { userIds: userId, size: "150x150", format: "Png", isCircular: false } }
+    );
+    const imageUrl: string | undefined = thumbRes.data?.data?.[0]?.imageUrl;
+    return imageUrl ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const PREFIX = "j!";
 const STOCK_CHANNEL_ID = "1495195376590786720";
@@ -80,10 +104,11 @@ async function handleGenerate(message: Message) {
 
   // Try to DM the user
   try {
+    const avatarUrl = await getRobloxAvatarUrl(account.username);
+
     const dmEmbed = new EmbedBuilder()
       .setTitle("🎮 Your Roblox Account")
       .setColor(0x00c851)
-      .setThumbnail("https://i.imgur.com/Rnmzm4z.png")
       .addFields(
         { name: "👤 Username", value: `\`${account.username}\`` },
         { name: "🔑 Password", value: `\`${account.password}\`` },
@@ -94,6 +119,8 @@ async function handleGenerate(message: Message) {
       )
       .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
       .setTimestamp();
+
+    if (avatarUrl) dmEmbed.setThumbnail(avatarUrl);
 
     await message.author.send({ embeds: [dmEmbed] });
 
