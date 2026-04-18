@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Message, EmbedBuilder } from "discord.js";
-import { generateRobloxAccount } from "./generator.js";
+import { createRobloxAccount } from "./generator.js";
 
 const PREFIX = "j!";
 
@@ -36,36 +36,55 @@ client.on("messageCreate", async (message: Message) => {
 });
 
 async function handleGenerate(message: Message) {
-  const loading = await message.reply("Generating your Roblox account...");
+  const loading = await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xe8192c)
+        .setDescription("⏳ Creating your Roblox account... Please wait."),
+    ],
+  });
 
   try {
-    const account = generateRobloxAccount();
+    const account = await createRobloxAccount();
+
+    const profileUrl = `https://www.roblox.com/users/${account.userId}/profile`;
 
     const embed = new EmbedBuilder()
-      .setTitle("Roblox Account Generated")
-      .setColor(0xe8192c)
+      .setTitle("✅ Roblox Account Created!")
+      .setColor(0x00c851)
+      .setURL(profileUrl)
       .setThumbnail("https://i.imgur.com/Rnmzm4z.png")
       .addFields(
-        { name: "Username", value: `\`${account.username}\``, inline: true },
-        { name: "Password", value: `\`${account.password}\``, inline: true },
-        { name: "Email", value: `\`${account.email}\``, inline: true },
-        { name: "Display Name", value: `\`${account.displayName}\``, inline: true },
-        { name: "Date of Birth", value: `\`${account.dateOfBirth}\``, inline: true },
-        { name: "Gender", value: `\`${account.gender}\``, inline: true },
-        { name: "Country", value: `\`${account.country}\``, inline: true },
-        { name: "PIN", value: `\`${account.pin}\``, inline: true },
-        { name: "Recovery Phrase", value: `\`${account.recoveryPhrase}\`` },
+        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+        { name: "🎂 Birthday", value: `\`${account.birthday}\``, inline: true },
+        { name: "🚻 Gender", value: `\`${account.gender}\``, inline: true },
+        { name: "🆔 User ID", value: `\`${account.userId}\``, inline: true },
+        { name: "🔗 Profile", value: `[Click here](${profileUrl})`, inline: true },
       )
-      .setFooter({
-        text: "Use these credentials to register at roblox.com/account/signupredir",
-      })
+      .setFooter({ text: "Login at roblox.com with the credentials above" })
       .setTimestamp();
 
-    await loading.delete();
-    await message.reply({ embeds: [embed] });
-  } catch (err) {
-    await loading.edit("An error occurred while generating the account.");
-    console.error(err);
+    await loading.edit({ embeds: [embed] });
+  } catch (err: any) {
+    console.error("Account creation error:", err?.response?.data ?? err?.message ?? err);
+
+    const errData = err?.response?.data;
+    let reason = "Unknown error";
+
+    if (errData?.errors?.length) {
+      reason = errData.errors.map((e: any) => e.message ?? e.code).join(", ");
+    } else if (err?.message) {
+      reason = err.message;
+    }
+
+    const errEmbed = new EmbedBuilder()
+      .setTitle("❌ Account Creation Failed")
+      .setColor(0xff4444)
+      .setDescription(`**Reason:** ${reason}\n\nRoblox may be rate limiting or blocking signups. Try again in a moment.`)
+      .setTimestamp();
+
+    await loading.edit({ embeds: [errEmbed] });
   }
 }
 
@@ -74,30 +93,26 @@ async function handleHelpGenerate(message: Message) {
     .setTitle("j!generate — Help")
     .setColor(0xe8192c)
     .setDescription(
-      "Generates a random Roblox account with all the information you need to register."
+      "Creates a **real** Roblox account and gives you the login credentials instantly."
     )
     .addFields(
       { name: "Usage", value: "`j!generate`" },
       {
         name: "What you get",
         value:
-          "• **Username** — A valid Roblox-style username\n" +
-          "• **Password** — A strong random password\n" +
-          "• **Email** — A random email address\n" +
-          "• **Display Name** — A random display name\n" +
-          "• **Date of Birth** — A random date of birth (18+)\n" +
-          "• **Gender** — Male or Female\n" +
-          "• **Country** — Random country\n" +
-          "• **PIN** — A 4-digit account PIN\n" +
-          "• **Recovery Phrase** — A 12-word recovery phrase",
+          "• **Username** — The Roblox username\n" +
+          "• **Password** — The account password\n" +
+          "• **Birthday** — Date of birth used for signup\n" +
+          "• **Gender** — Chosen gender\n" +
+          "• **User ID** — The actual Roblox user ID\n" +
+          "• **Profile Link** — Direct link to the Roblox profile",
       },
       {
-        name: "How to use",
+        name: "Notes",
         value:
-          "1. Run `j!generate`\n" +
-          "2. Go to [roblox.com/account/signupredir](https://www.roblox.com/account/signupredir)\n" +
-          "3. Enter the username, password, date of birth, and gender shown\n" +
-          "4. Complete sign-up and save your credentials!",
+          "• The account is created **for real** on Roblox — you can log in immediately\n" +
+          "• Save the credentials right away as they won't be shown again\n" +
+          "• Roblox may rate limit if you generate too many accounts quickly",
       }
     )
     .setTimestamp();
@@ -113,7 +128,7 @@ async function handleHelp(message: Message) {
     .addFields(
       {
         name: "`j!generate`",
-        value: "Generate a random Roblox account with all credentials.",
+        value: "Create a real Roblox account and get the login credentials.",
       },
       {
         name: "`j!help generate`",

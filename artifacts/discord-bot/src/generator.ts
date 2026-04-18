@@ -1,3 +1,5 @@
+import axios from "axios";
+
 const adjectives = [
   "Cool", "Dark", "Bright", "Shadow", "Flame", "Ice", "Storm", "Swift",
   "Mighty", "Silent", "Neon", "Hyper", "Ultra", "Super", "Epic", "Mega",
@@ -12,26 +14,6 @@ const nouns = [
   "Blade", "Striker", "Sniper", "Runner", "Master", "King", "Pro",
   "Destroyer", "Champion", "Ace", "Rogue", "Ranger", "Phantom", "Ghost",
   "Spark", "Storm", "Nova", "Void", "Exile", "Reaper", "Specter",
-];
-
-const emailDomains = [
-  "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com",
-  "protonmail.com", "mail.com", "zoho.com",
-];
-
-const countries = [
-  "United States", "Canada", "United Kingdom", "Australia", "Germany",
-  "France", "Netherlands", "Sweden", "Norway", "Finland", "Denmark",
-  "New Zealand", "Switzerland", "Austria", "Belgium",
-];
-
-const wordList = [
-  "apple", "river", "cloud", "stone", "light", "dream", "spark", "flame",
-  "ocean", "tiger", "maple", "quest", "brave", "storm", "frost", "ember",
-  "lunar", "solar", "grace", "amber", "cedar", "crisp", "delta", "eagle",
-  "forge", "globe", "haven", "ivory", "jewel", "karma", "lance", "might",
-  "north", "orbit", "peace", "quill", "reign", "shine", "trail", "unity",
-  "valor", "winds", "xenon", "yield", "zephyr", "arise", "bliss", "crane",
 ];
 
 function randomInt(min: number, max: number): number {
@@ -61,7 +43,7 @@ function generatePassword(): string {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const lower = "abcdefghjkmnpqrstuvwxyz";
   const digits = "23456789";
-  const special = "!@#$%^&*";
+  const special = "!@#$%";
 
   let password = "";
   password += upper[randomInt(0, upper.length - 1)];
@@ -71,86 +53,96 @@ function generatePassword(): string {
   password += digits[randomInt(0, digits.length - 1)];
   password += digits[randomInt(0, digits.length - 1)];
   password += special[randomInt(0, special.length - 1)];
-  password += special[randomInt(0, special.length - 1)];
 
-  const all = upper + lower + digits + special;
-  for (let i = 0; i < randomInt(4, 8); i++) {
+  const all = upper + lower + digits;
+  for (let i = 0; i < randomInt(3, 6); i++) {
     password += all[randomInt(0, all.length - 1)];
   }
 
   return password.split("").sort(() => Math.random() - 0.5).join("");
 }
 
-function generateEmail(username: string): string {
-  const domain = randomItem(emailDomains);
-  const num = randomInt(1, 999);
-  const formats = [
-    `${username.toLowerCase()}@${domain}`,
-    `${username.toLowerCase()}${num}@${domain}`,
-    `${username.toLowerCase()}.${randomInt(1, 99)}@${domain}`,
-  ];
-  return randomItem(formats);
-}
-
-function generateDisplayName(): string {
-  const firstNames = [
-    "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Avery",
-    "Quinn", "Skyler", "Cameron", "Blake", "Drew", "Reese", "Logan",
-    "Peyton", "Sam", "Charlie", "Finley", "Sage", "River",
-  ];
-  const lastNames = [
-    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
-    "Davis", "Wilson", "Moore", "Taylor", "Anderson", "Thomas", "Jackson",
-    "White", "Harris", "Martin", "Thompson", "Young", "Allen",
-  ];
-  return `${randomItem(firstNames)} ${randomItem(lastNames)}`;
-}
-
-function generateDateOfBirth(): string {
-  const year = randomInt(1980, 2003);
-  const month = randomInt(1, 12);
-  const day = randomInt(1, 28);
-  const monthStr = month.toString().padStart(2, "0");
-  const dayStr = day.toString().padStart(2, "0");
-  return `${monthStr}/${dayStr}/${year}`;
-}
-
-function generatePin(): string {
-  return randomInt(1000, 9999).toString();
-}
-
-function generateRecoveryPhrase(): string {
-  const words: string[] = [];
-  const shuffled = [...wordList].sort(() => Math.random() - 0.5);
-  for (let i = 0; i < 12; i++) {
-    words.push(shuffled[i]);
-  }
-  return words.join(" ");
+function generateBirthday(): { month: number; day: number; year: number } {
+  return {
+    month: randomInt(1, 12),
+    day: randomInt(1, 28),
+    year: randomInt(1990, 2003),
+  };
 }
 
 export interface RobloxAccount {
   username: string;
   password: string;
-  email: string;
-  displayName: string;
-  dateOfBirth: string;
+  userId: number;
   gender: string;
-  country: string;
-  pin: string;
-  recoveryPhrase: string;
+  birthday: string;
 }
 
-export function generateRobloxAccount(): RobloxAccount {
+export async function createRobloxAccount(): Promise<RobloxAccount> {
   const username = generateUsername();
+  const password = generatePassword();
+  const birthday = generateBirthday();
+  const gender = Math.random() < 0.5 ? 1 : 2; // 1=unknown/male, 2=female in Roblox API
+
+  const birthdayStr = `${birthday.year}-${String(birthday.month).padStart(2, "0")}-${String(birthday.day).padStart(2, "0")}T00:00:00.000Z`;
+
+  const baseHeaders = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.roblox.com",
+    "Referer": "https://www.roblox.com/",
+  };
+
+  // Step 1: Get CSRF token
+  let csrfToken = "";
+  try {
+    await axios.post(
+      "https://auth.roblox.com/v2/signup",
+      {},
+      { headers: baseHeaders }
+    );
+  } catch (err: any) {
+    const token = err?.response?.headers?.["x-csrf-token"];
+    if (token) csrfToken = token;
+    else throw new Error("Could not obtain CSRF token from Roblox.");
+  }
+
+  // Step 2: Submit signup
+  const payload = {
+    username,
+    password,
+    birthday: birthdayStr,
+    gender,
+    isTosAgreementBoxChecked: true,
+    agreementIds: [
+      "adf95b84-cd26-4a2e-9960-68183ebd6393",
+      "91b2d276-92ca-485f-b50d-c3952faa1b6a",
+    ],
+  };
+
+  const response = await axios.post(
+    "https://auth.roblox.com/v2/signup",
+    payload,
+    {
+      headers: {
+        ...baseHeaders,
+        "Content-Type": "application/json",
+        "x-csrf-token": csrfToken,
+      },
+    }
+  );
+
+  const userId: number = response.data?.userId ?? response.data?.user?.id ?? 0;
+
+  const genderLabel = gender === 2 ? "Female" : "Male";
+  const birthdayLabel = `${String(birthday.month).padStart(2, "0")}/${String(birthday.day).padStart(2, "0")}/${birthday.year}`;
+
   return {
     username,
-    password: generatePassword(),
-    email: generateEmail(username),
-    displayName: generateDisplayName(),
-    dateOfBirth: generateDateOfBirth(),
-    gender: Math.random() < 0.5 ? "Male" : "Female",
-    country: randomItem(countries),
-    pin: generatePin(),
-    recoveryPhrase: generateRecoveryPhrase(),
+    password,
+    userId,
+    gender: genderLabel,
+    birthday: birthdayLabel,
   };
 }
