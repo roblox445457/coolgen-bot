@@ -78,6 +78,7 @@ async function getRobloxProfile(username: string): Promise<RobloxProfile | null>
 
 const PREFIX = "j!";
 const STOCK_CHANNEL_ID = "1495195376590786720";
+const STOCK_ALLOWED_USER_ID = "1230660770749087796";
 
 const client = new Client({
   intents: [
@@ -207,6 +208,18 @@ async function handleGenerate(message: Message) {
 }
 
 async function handleAddStock(message: Message) {
+  // Restrict to allowed user only
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ You don't have permission to use this command."),
+      ],
+    });
+    return;
+  }
+
   // Restrict to the stock channel
   if (message.channel.id !== STOCK_CHANNEL_ID) {
     await message.reply({
