@@ -8,9 +8,21 @@ import {
 import axios from "axios";
 import { addAccount, popAccount, stockCount } from "./stock.js";
 
-async function getRobloxAvatarUrl(username: string): Promise<string | null> {
+interface RobloxProfile {
+  userId: number;
+  displayName: string;
+  avatarUrl: string | null;
+  createdAt: Date | null;
+  ageDays: number | null;
+  friends: number | null;
+  followers: number | null;
+  following: number | null;
+  isBanned: boolean;
+}
+
+async function getRobloxProfile(username: string): Promise<RobloxProfile | null> {
   try {
-    // Step 1: resolve username → userId
+    // Resolve username → userId
     const userRes = await axios.post(
       "https://users.roblox.com/v1/usernames/users",
       { usernames: [username], excludeBannedUsers: false },
@@ -19,13 +31,46 @@ async function getRobloxAvatarUrl(username: string): Promise<string | null> {
     const userId: number | undefined = userRes.data?.data?.[0]?.id;
     if (!userId) return null;
 
-    // Step 2: fetch headshot thumbnail
-    const thumbRes = await axios.get(
-      "https://thumbnails.roblox.com/v1/users/avatar-headshot",
-      { params: { userIds: userId, size: "150x150", format: "Png", isCircular: false } }
-    );
-    const imageUrl: string | undefined = thumbRes.data?.data?.[0]?.imageUrl;
-    return imageUrl ?? null;
+    // Fetch all details in parallel
+    const [infoRes, thumbRes, friendsRes, followersRes, followingRes] = await Promise.allSettled([
+      axios.get(`https://users.roblox.com/v1/users/${userId}`),
+      axios.get("https://thumbnails.roblox.com/v1/users/avatar-headshot", {
+        params: { userIds: userId, size: "150x150", format: "Png", isCircular: false },
+      }),
+      axios.get(`https://friends.roblox.com/v1/users/${userId}/friends/count`),
+      axios.get(`https://friends.roblox.com/v1/users/${userId}/followers/count`),
+      axios.get(`https://friends.roblox.com/v1/users/${userId}/followings/count`),
+    ]);
+
+    const info = infoRes.status === "fulfilled" ? infoRes.value.data : null;
+    const avatarUrl =
+      thumbRes.status === "fulfilled"
+        ? (thumbRes.value.data?.data?.[0]?.imageUrl ?? null)
+        : null;
+
+    const createdAt = info?.created ? new Date(info.created) : null;
+    const ageDays = createdAt
+      ? Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    const friends =
+      friendsRes.status === "fulfilled" ? (friendsRes.value.data?.count ?? null) : null;
+    const followers =
+      followersRes.status === "fulfilled" ? (followersRes.value.data?.count ?? null) : null;
+    const following =
+      followingRes.status === "fulfilled" ? (followingRes.value.data?.count ?? null) : null;
+
+    return {
+      userId,
+      displayName: info?.displayName ?? username,
+      avatarUrl,
+      createdAt,
+      ageDays,
+      friends,
+      followers,
+      following,
+      isBanned: info?.isBanned ?? false,
+    };
   } catch {
     return null;
   }
@@ -104,14 +149,30 @@ async function handleGenerate(message: Message) {
 
   // Try to DM the user
   try {
-    const avatarUrl = await getRobloxAvatarUrl(account.username);
+    const profile = await getRobloxProfile(account.username);
+
+    const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+    const createdStr = profile?.createdAt
+      ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      : "N/A";
+    const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+      ? `${profile.ageDays.toLocaleString()} days`
+      : "N/A";
+    const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
 
     const dmEmbed = new EmbedBuilder()
       .setTitle("🎮 Your Roblox Account")
       .setColor(0x00c851)
       .addFields(
-        { name: "👤 Username", value: `\`${account.username}\`` },
-        { name: "🔑 Password", value: `\`${account.password}\`` },
+        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+        { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+        { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+        { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+        { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+        { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+        { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+        { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
         {
           name: "🍪 Security Cookie (.ROBLOSECURITY)",
           value: `\`\`\`${account.cookie}\`\`\``,
@@ -120,7 +181,8 @@ async function handleGenerate(message: Message) {
       .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
       .setTimestamp();
 
-    if (avatarUrl) dmEmbed.setThumbnail(avatarUrl);
+    if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+    if (profileUrl) dmEmbed.setURL(profileUrl);
 
     await message.author.send({ embeds: [dmEmbed] });
 
