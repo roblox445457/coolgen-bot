@@ -6,7 +6,10 @@ import {
   TextChannel,
 } from "discord.js";
 import axios from "axios";
-import { addAccount, popAccount, stockCount } from "./stock.js";
+import {
+  addAccount, popAccount, stockCount,
+  addPremiumAccount, popPremiumAccount, premiumStockCount,
+} from "./stock.js";
 
 interface RobloxProfile {
   userId: number;
@@ -79,6 +82,7 @@ async function getRobloxProfile(username: string): Promise<RobloxProfile | null>
 const PREFIX = "j!";
 const STOCK_CHANNEL_ID = "1495195376590786720";
 const STOCK_ALLOWED_USER_ID = "1230660770749087796";
+const PREMIUM_ROLE_ID = "1495200351710613566";
 
 const client = new Client({
   intents: [
@@ -92,6 +96,7 @@ const client = new Client({
 // Track active addstock sessions: userId -> step + collected data
 interface Session {
   step: "username" | "password" | "cookie";
+  isPremium: boolean;
   username?: string;
   password?: string;
 }
@@ -122,10 +127,16 @@ client.on("messageCreate", async (message: Message) => {
 
   if (command === "generate") {
     await handleGenerate(message);
+  } else if (command === "generatepremium") {
+    await handleGeneratePremium(message);
   } else if (command === "addstock") {
-    await handleAddStock(message);
+    await handleAddStock(message, false);
+  } else if (command === "addpremiumstock") {
+    await handleAddStock(message, true);
   } else if (command === "stock") {
     await handleStockCount(message);
+  } else if (command === "premiumstock") {
+    await handlePremiumStockCount(message);
   } else if (command === "user") {
     await handleUser(message, args[1]);
   } else if (command === "accountdays") {
@@ -211,7 +222,7 @@ async function handleGenerate(message: Message) {
   }
 }
 
-async function handleAddStock(message: Message) {
+async function handleAddStock(message: Message, isPremium: boolean) {
   // Restrict to allowed user only
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
@@ -237,13 +248,14 @@ async function handleAddStock(message: Message) {
   }
 
   // Start a session for this user
-  sessions.set(message.author.id, { step: "username" });
+  sessions.set(message.author.id, { step: "username", isPremium });
 
+  const label = isPremium ? "⭐ Add Premium Stock" : "➕ Add Stock";
   await message.reply({
     embeds: [
       new EmbedBuilder()
-        .setColor(0xe8192c)
-        .setTitle("➕ Add Stock")
+        .setColor(isPremium ? 0xf5a623 : 0xe8192c)
+        .setTitle(label)
         .setDescription("**Roblox Username?**\n\nType the username of the account below."),
     ],
   });
@@ -283,24 +295,30 @@ async function handleSessionReply(message: Message) {
     });
   } else if (session.step === "cookie") {
     const cookie = input;
+    const isPremium = session.isPremium;
     sessions.delete(message.author.id);
 
-    addAccount({
-      username: session.username!,
-      password: session.password!,
-      cookie,
-    });
+    const account = { username: session.username!, password: session.password!, cookie };
+    if (isPremium) {
+      addPremiumAccount(account);
+    } else {
+      addAccount(account);
+    }
 
-    const count = stockCount();
+    const count = isPremium ? premiumStockCount() : stockCount();
+    const label = isPremium ? "✅ Account Added to Premium Stock" : "✅ Account Added to Stock";
+    const color = isPremium ? 0xf5a623 : 0x00c851;
+    const stockLabel = isPremium ? "⭐ Premium Stock" : "📦 Total Stock";
+
     await message.reply({
       embeds: [
         new EmbedBuilder()
-          .setColor(0x00c851)
-          .setTitle("✅ Account Added to Stock")
+          .setColor(color)
+          .setTitle(label)
           .addFields(
             { name: "👤 Username", value: `\`${session.username}\``, inline: true },
             { name: "🔑 Password", value: `\`${session.password}\``, inline: true },
-            { name: "📦 Total Stock", value: `\`${count} account(s)\``, inline: true },
+            { name: stockLabel, value: `\`${count} account(s)\``, inline: true },
           )
           .setTimestamp(),
       ],
@@ -317,6 +335,120 @@ async function handleStockCount(message: Message) {
         .setDescription(`📦 **Stock:** \`${count}\` account(s) available`),
     ],
   });
+}
+
+async function handlePremiumStockCount(message: Message) {
+  const count = premiumStockCount();
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xf5a623)
+        .setDescription(`⭐ **Premium Stock:** \`${count}\` account(s) available`),
+    ],
+  });
+}
+
+async function handleGeneratePremium(message: Message) {
+  // Must be used in a server
+  if (!message.guild) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ This command can only be used in a server."),
+      ],
+    });
+    return;
+  }
+
+  // Check for Premium role
+  const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+  const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+
+  if (!hasPremium) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("⭐ Premium Required")
+          .setColor(0xf5a623)
+          .setDescription(
+            "You need the **Premium** role to use this command.\n\nUpgrade to Premium to access premium Roblox accounts!"
+          ),
+      ],
+    });
+    return;
+  }
+
+  const account = popPremiumAccount();
+
+  if (!account) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Premium Stock Empty")
+          .setColor(0xff4444)
+          .setDescription("There are no premium accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  try {
+    const profile = await getRobloxProfile(account.username);
+
+    const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+    const createdStr = profile?.createdAt
+      ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      : "N/A";
+    const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+      ? `${profile.ageDays.toLocaleString()} days`
+      : "N/A";
+    const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+    const dmEmbed = new EmbedBuilder()
+      .setTitle("⭐ Your Premium Roblox Account")
+      .setColor(0xf5a623)
+      .addFields(
+        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+        { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+        { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+        { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+        { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+        { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+        { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+        { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+        {
+          name: "🍪 Security Cookie (.ROBLOSECURITY)",
+          value: `\`\`\`${account.cookie}\`\`\``,
+        },
+      )
+      .setFooter({ text: "⭐ Premium Account — Login at roblox.com" })
+      .setTimestamp();
+
+    if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+    if (profileUrl) dmEmbed.setURL(profileUrl);
+
+    await message.author.send({ embeds: [dmEmbed] });
+
+    const successEmbed = new EmbedBuilder()
+      .setColor(0xf5a623)
+      .setDescription(`⭐ Check your DMs, ${message.author}! Your premium account has been sent.`)
+      .setTimestamp();
+    await message.reply({ embeds: [successEmbed] });
+  } catch {
+    addPremiumAccount(account);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Could Not DM You")
+          .setColor(0xff4444)
+          .setDescription(
+            "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generatepremium` again."
+          ),
+      ],
+    });
+  }
 }
 
 async function handleUser(message: Message, username: string | undefined) {
@@ -471,8 +603,11 @@ async function handleHelp(message: Message) {
     .setColor(0xe8192c)
     .addFields(
       { name: "`j!generate`", value: "Get a free Roblox account sent to your DMs." },
-      { name: "`j!stock`", value: "Check how many accounts are currently in stock." },
-      { name: "`j!addstock`", value: "Add an account to stock (restricted)." },
+      { name: "`j!stock`", value: "Check how many free accounts are in stock." },
+      { name: "`j!generatepremium`", value: "⭐ Get a premium Roblox account (requires Premium role)." },
+      { name: "`j!premiumstock`", value: "⭐ Check how many premium accounts are in stock." },
+      { name: "`j!addstock`", value: "Add an account to free stock (restricted)." },
+      { name: "`j!addpremiumstock`", value: "⭐ Add an account to premium stock (restricted)." },
       { name: "`j!user <username>`", value: "Look up a Roblox user's full profile." },
       { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
       { name: "`j!help generate`", value: "Detailed help for the generate command." },

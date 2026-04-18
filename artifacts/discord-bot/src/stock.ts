@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STOCK_FILE = join(__dirname, "../stock.json");
+const PREMIUM_STOCK_FILE = join(__dirname, "../premium-stock.json");
 
 export interface Account {
   username: string;
@@ -11,33 +12,55 @@ export interface Account {
   cookie: string;
 }
 
-function load(): Account[] {
-  if (!existsSync(STOCK_FILE)) return [];
+function loadFile(file: string): Account[] {
+  if (!existsSync(file)) return [];
   try {
-    return JSON.parse(readFileSync(STOCK_FILE, "utf-8")) as Account[];
+    return JSON.parse(readFileSync(file, "utf-8")) as Account[];
   } catch {
     return [];
   }
 }
 
-function save(accounts: Account[]): void {
-  writeFileSync(STOCK_FILE, JSON.stringify(accounts, null, 2), "utf-8");
+function saveFile(file: string, accounts: Account[]): void {
+  writeFileSync(file, JSON.stringify(accounts, null, 2), "utf-8");
 }
 
+// ── Regular stock ─────────────────────────────────────────────────────────────
+
 export function addAccount(account: Account): void {
-  const accounts = load();
+  const accounts = loadFile(STOCK_FILE);
   accounts.push(account);
-  save(accounts);
+  saveFile(STOCK_FILE, accounts);
 }
 
 export function popAccount(): Account | null {
-  const accounts = load();
+  const accounts = loadFile(STOCK_FILE);
   if (accounts.length === 0) return null;
   const account = accounts.shift()!;
-  save(accounts);
+  saveFile(STOCK_FILE, accounts);
   return account;
 }
 
 export function stockCount(): number {
-  return load().length;
+  return loadFile(STOCK_FILE).length;
+}
+
+// ── Premium stock ─────────────────────────────────────────────────────────────
+
+export function addPremiumAccount(account: Account): void {
+  const accounts = loadFile(PREMIUM_STOCK_FILE);
+  accounts.push(account);
+  saveFile(PREMIUM_STOCK_FILE, accounts);
+}
+
+export function popPremiumAccount(): Account | null {
+  const accounts = loadFile(PREMIUM_STOCK_FILE);
+  if (accounts.length === 0) return null;
+  const account = accounts.shift()!;
+  saveFile(PREMIUM_STOCK_FILE, accounts);
+  return account;
+}
+
+export function premiumStockCount(): number {
+  return loadFile(PREMIUM_STOCK_FILE).length;
 }
