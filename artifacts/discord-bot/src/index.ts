@@ -40,12 +40,18 @@ async function handleGenerate(message: Message) {
     embeds: [
       new EmbedBuilder()
         .setColor(0xe8192c)
-        .setDescription("⏳ Creating your Roblox account... Please wait."),
+        .setDescription("⏳ Creating your Roblox account...\n\n`Step 1/3` — Getting challenge from Roblox"),
     ],
   });
 
+  // Update status as we go
+  const updateStatus = (text: string) =>
+    loading.edit({
+      embeds: [new EmbedBuilder().setColor(0xe8192c).setDescription(`⏳ Creating your Roblox account...\n\n${text}`)],
+    }).catch(() => {});
+
   try {
-    const account = await createRobloxAccount();
+    const account = await createRobloxAccount(updateStatus);
 
     const profileUrl = `https://www.roblox.com/users/${account.userId}/profile`;
 

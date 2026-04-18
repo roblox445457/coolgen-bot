@@ -1,4 +1,5 @@
-import axios from "axios";
+import axios, { AxiosInstance } from "axios";
+import { solveFunCaptcha } from "./capmonster.js";
 
 const adjectives = [
   "Cool", "Dark", "Bright", "Shadow", "Flame", "Ice", "Storm", "Swift",
@@ -12,7 +13,7 @@ const nouns = [
   "Player", "Gamer", "Builder", "Hero", "Slayer", "Hunter", "Warrior",
   "Coder", "Blaster", "Raider", "Knight", "Wizard", "Titan", "Legend",
   "Blade", "Striker", "Sniper", "Runner", "Master", "King", "Pro",
-  "Destroyer", "Champion", "Ace", "Rogue", "Ranger", "Phantom", "Ghost",
+  "Destroyer", "Champion", "Ace", "Rogue", "Ranger", "Phantom",
   "Spark", "Storm", "Nova", "Void", "Exile", "Reaper", "Specter",
 ];
 
@@ -70,6 +71,19 @@ function generateBirthday(): { month: number; day: number; year: number } {
   };
 }
 
+function buildClient(): AxiosInstance {
+  return axios.create({
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "application/json, text/plain, */*",
+      "Accept-Language": "en-US,en;q=0.9",
+      Origin: "https://www.roblox.com",
+      Referer: "https://www.roblox.com/",
+    },
+  });
+}
+
 export interface RobloxAccount {
   username: string;
   password: string;
@@ -78,38 +92,18 @@ export interface RobloxAccount {
   birthday: string;
 }
 
-export async function createRobloxAccount(): Promise<RobloxAccount> {
+export async function createRobloxAccount(
+  onProgress?: (msg: string) => void
+): Promise<RobloxAccount> {
+  const client = buildClient();
   const username = generateUsername();
   const password = generatePassword();
   const birthday = generateBirthday();
-  const gender = Math.random() < 0.5 ? 1 : 2; // 1=unknown/male, 2=female in Roblox API
+  const gender = Math.random() < 0.5 ? 1 : 2;
 
   const birthdayStr = `${birthday.year}-${String(birthday.month).padStart(2, "0")}-${String(birthday.day).padStart(2, "0")}T00:00:00.000Z`;
 
-  const baseHeaders = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://www.roblox.com",
-    "Referer": "https://www.roblox.com/",
-  };
-
-  // Step 1: Get CSRF token
-  let csrfToken = "";
-  try {
-    await axios.post(
-      "https://auth.roblox.com/v2/signup",
-      {},
-      { headers: baseHeaders }
-    );
-  } catch (err: any) {
-    const token = err?.response?.headers?.["x-csrf-token"];
-    if (token) csrfToken = token;
-    else throw new Error("Could not obtain CSRF token from Roblox.");
-  }
-
-  // Step 2: Submit signup
-  const payload = {
+  const signupPayload = {
     username,
     password,
     birthday: birthdayStr,
@@ -121,28 +115,109 @@ export async function createRobloxAccount(): Promise<RobloxAccount> {
     ],
   };
 
-  const response = await axios.post(
+  onProgress?.(`\`Step 1/4\` — Getting CSRF token from Roblox`);
+
+  // Step 1: Get CSRF token
+  let csrfToken = "";
+  try {
+    await client.post("https://auth.roblox.com/v2/signup", {});
+  } catch (err: any) {
+    csrfToken = err?.response?.headers?.["x-csrf-token"] ?? "";
+  }
+  if (!csrfToken) throw new Error("Could not obtain CSRF token.");
+
+  onProgress?.(`\`Step 2/4\` — Triggering Roblox challenge...`);
+
+  // Step 2: First signup attempt — expect challenge
+  let challengeId = "";
+  try {
+    const res = await client.post(
+      "https://auth.roblox.com/v2/signup",
+      signupPayload,
+      { headers: { "x-csrf-token": csrfToken, "Content-Type": "application/json" } }
+    );
+    // If it somehow succeeds without a challenge
+    const userId = res.data?.userId ?? 0;
+    return buildResult(username, password, userId, gender, birthday);
+  } catch (err: any) {
+    const headers = err?.response?.headers ?? {};
+    challengeId = headers["rblx-challenge-id"] ?? "";
+    const challengeType = headers["rblx-challenge-type"] ?? "";
+
+    if (!challengeId || challengeType !== "arkose") {
+      const errMsg = err?.response?.data?.errors?.[0]?.message ?? err?.message ?? "Unknown";
+      throw new Error(errMsg);
+    }
+    console.log(`Got challenge ID: ${challengeId}`);
+  }
+
+  // Step 3: Fetch challenge info (arkose blob)
+  const infoRes = await client.get(
+    `https://apis.roblox.com/challenge/v1/info`,
+    { params: { challengeId } }
+  );
+  const blob: string = infoRes.data?.challengeMetaData?.dataExchangeBlob ?? "";
+  const unifiedCaptchaId: string = infoRes.data?.challengeMetaData?.unifiedCaptchaId ?? "";
+  if (!blob) throw new Error("Could not get Arkose blob from Roblox challenge info.");
+
+  onProgress?.(`\`Step 3/4\` — Solving CAPTCHA via CapMonster (this may take ~30s)...`);
+  console.log(`Got arkose blob, sending to CapMonster...`);
+
+  // Step 4: Solve with CapMonster
+  const captchaToken = await solveFunCaptcha(blob);
+
+  onProgress?.(`\`Step 4/4\` — Submitting solved challenge & creating account...`);
+
+  // Step 5: Submit solved token back to Roblox challenge system
+  const continueRes = await client.post(
+    "https://apis.roblox.com/challenge/v1/continue",
+    {
+      challengeId,
+      challengeType: "arkose",
+      challengeMetaData: {
+        unifiedCaptchaId,
+        captchaToken,
+        actionType: "Signup",
+      },
+    },
+    { headers: { "x-csrf-token": csrfToken, "Content-Type": "application/json" } }
+  );
+  const challengeMetadata: string = continueRes.data?.challengeMetaData ?? "";
+  if (!challengeMetadata) throw new Error("Challenge continue did not return metadata.");
+  console.log("Challenge verified, retrying signup...");
+
+  // Step 6: Retry signup with verified challenge headers
+  const finalRes = await client.post(
     "https://auth.roblox.com/v2/signup",
-    payload,
+    signupPayload,
     {
       headers: {
-        ...baseHeaders,
-        "Content-Type": "application/json",
         "x-csrf-token": csrfToken,
+        "Content-Type": "application/json",
+        "rblx-challenge-id": challengeId,
+        "rblx-challenge-type": "arkose",
+        "rblx-challenge-metadata": challengeMetadata,
       },
     }
   );
 
-  const userId: number = response.data?.userId ?? response.data?.user?.id ?? 0;
+  const userId = finalRes.data?.userId ?? finalRes.data?.user?.id ?? 0;
+  console.log(`Account created! userId=${userId} username=${username}`);
+  return buildResult(username, password, userId, gender, birthday);
+}
 
-  const genderLabel = gender === 2 ? "Female" : "Male";
-  const birthdayLabel = `${String(birthday.month).padStart(2, "0")}/${String(birthday.day).padStart(2, "0")}/${birthday.year}`;
-
+function buildResult(
+  username: string,
+  password: string,
+  userId: number,
+  gender: number,
+  birthday: { month: number; day: number; year: number }
+): RobloxAccount {
   return {
     username,
     password,
     userId,
-    gender: genderLabel,
-    birthday: birthdayLabel,
+    gender: gender === 2 ? "Female" : "Male",
+    birthday: `${String(birthday.month).padStart(2, "0")}/${String(birthday.day).padStart(2, "0")}/${birthday.year}`,
   };
 }
