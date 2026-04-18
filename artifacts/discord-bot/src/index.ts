@@ -126,6 +126,10 @@ client.on("messageCreate", async (message: Message) => {
     await handleAddStock(message);
   } else if (command === "stock") {
     await handleStockCount(message);
+  } else if (command === "user") {
+    await handleUser(message, args[1]);
+  } else if (command === "accountdays") {
+    await handleAccountDays(message, args[1]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -315,6 +319,128 @@ async function handleStockCount(message: Message) {
   });
 }
 
+async function handleUser(message: Message, username: string | undefined) {
+  if (!username) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ Please provide a username. Usage: `j!user <username>`"),
+      ],
+    });
+    return;
+  }
+
+  const loading = await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xe8192c)
+        .setDescription(`🔍 Looking up **${username}**...`),
+    ],
+  });
+
+  const profile = await getRobloxProfile(username);
+
+  if (!profile) {
+    await loading.edit({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ User Not Found")
+          .setDescription(`Could not find a Roblox account with the username \`${username}\`.`),
+      ],
+    });
+    return;
+  }
+
+  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+  const createdStr = profile.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile.ageDays !== null
+    ? `${profile.ageDays.toLocaleString()} days`
+    : "N/A";
+  const profileUrl = `https://www.roblox.com/users/${profile.userId}/profile`;
+
+  const embed = new EmbedBuilder()
+    .setTitle(`👤 ${profile.displayName} (@${username})`)
+    .setURL(profileUrl)
+    .setColor(0xe8192c)
+    .addFields(
+      { name: "🆔 User ID", value: `\`${profile.userId}\``, inline: true },
+      { name: "🏷️ Display Name", value: `\`${profile.displayName}\``, inline: true },
+      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+      { name: "👫 Friends", value: `\`${fmt(profile.friends)}\``, inline: true },
+      { name: "👥 Followers", value: `\`${fmt(profile.followers)}\``, inline: true },
+      { name: "➡️ Following", value: `\`${fmt(profile.following)}\``, inline: true },
+      { name: "🔨 Banned", value: `\`${profile.isBanned ? "Yes" : "No"}\``, inline: true },
+    )
+    .setFooter({ text: "Roblox User Lookup" })
+    .setTimestamp();
+
+  if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
+
+  await loading.edit({ embeds: [embed] });
+}
+
+async function handleAccountDays(message: Message, username: string | undefined) {
+  if (!username) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ Please provide a username. Usage: `j!accountdays <username>`"),
+      ],
+    });
+    return;
+  }
+
+  const loading = await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xe8192c)
+        .setDescription(`🔍 Checking age of **${username}**...`),
+    ],
+  });
+
+  const profile = await getRobloxProfile(username);
+
+  if (!profile) {
+    await loading.edit({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ User Not Found")
+          .setDescription(`Could not find a Roblox account with the username \`${username}\`.`),
+      ],
+    });
+    return;
+  }
+
+  const createdStr = profile.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile.ageDays !== null
+    ? `${profile.ageDays.toLocaleString()} days`
+    : "N/A";
+  const years = profile.ageDays !== null ? (profile.ageDays / 365).toFixed(1) : null;
+
+  const embed = new EmbedBuilder()
+    .setTitle(`⏳ Account Age — ${username}`)
+    .setColor(0xe8192c)
+    .addFields(
+      { name: "📅 Created On", value: `\`${createdStr}\``, inline: true },
+      { name: "⏳ Days Old", value: `\`${ageDaysStr}\``, inline: true },
+      { name: "📆 Years Old", value: `\`${years !== null ? `${years} years` : "N/A"}\``, inline: true },
+    )
+    .setTimestamp();
+
+  if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
+
+  await loading.edit({ embeds: [embed] });
+}
+
 async function handleHelpGenerate(message: Message) {
   const embed = new EmbedBuilder()
     .setTitle("j!generate — Help")
@@ -346,7 +472,9 @@ async function handleHelp(message: Message) {
     .addFields(
       { name: "`j!generate`", value: "Get a free Roblox account sent to your DMs." },
       { name: "`j!stock`", value: "Check how many accounts are currently in stock." },
-      { name: "`j!addstock`", value: "Add an account to stock (restricted channel only)." },
+      { name: "`j!addstock`", value: "Add an account to stock (restricted)." },
+      { name: "`j!user <username>`", value: "Look up a Roblox user's full profile." },
+      { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
       { name: "`j!help generate`", value: "Detailed help for the generate command." },
       { name: "`j!help`", value: "Show this help message." },
     )
