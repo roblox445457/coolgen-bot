@@ -109,6 +109,8 @@ client.once("clientReady", (c) => {
 
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
+  // Ignore all DMs — bot only responds in servers
+  if (!message.guild) return;
 
   // Handle active addstock session replies (only in the stock channel)
   if (
