@@ -202,7 +202,7 @@ client.on("messageCreate", async (message: Message) => {
     await handlePremiumStockCount(message);
   } else if (command === "godstock") {
     await handleGodStockCount(message);
-  } else if (command === "allstock") {
+  } else if (command === "allstocks") {
     await handleAllStock(message);
   } else if (command === "showapipanel") {
     await handleShowApiPanel(message);
