@@ -14,6 +14,7 @@ import {
 } from "discord.js";
 import axios from "axios";
 import {
+  Account,
   addAccount, popAccount, stockCount,
   addGodAccount, popGodAccount, godStockCount,
   addPremiumAccount, popPremiumAccount, premiumStockCount,
@@ -119,6 +120,13 @@ const sessions = new Map<string, Session>();
 const GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 const generateCooldowns = new Map<string, number>();
 
+// Pending accounts for users whose DMs are off
+interface PendingAccount {
+  account: Account;
+  tier: "free" | "premium" | "god";
+}
+const pendingAccounts = new Map<string, PendingAccount>();
+
 // Home guild is resolved at startup from the stock channel
 let HOME_GUILD_ID: string | null = null;
 
@@ -214,8 +222,66 @@ client.on("messageCreate", async (message: Message) => {
 client.on("interactionCreate", async (interaction: Interaction) => {
   if (interaction.isButton()) {
     const id = interaction.customId;
+    const userId = interaction.user.id;
 
-    if (id === "api_redeem") {
+    if (id === "dm_yes") {
+      const pending = pendingAccounts.get(userId);
+      if (!pending) {
+        await interaction.reply({ content: "❌ No pending account found — it may have expired.", ephemeral: true });
+        return;
+      }
+      pendingAccounts.delete(userId);
+      generateCooldowns.set(userId, Date.now());
+
+      const { account } = pending;
+      const tierLabel = pending.tier === "god" ? "🌟 God-Tier" : pending.tier === "premium" ? "⭐ Premium" : "🎮";
+      const color = pending.tier === "god" ? 0x9b59b6 : pending.tier === "premium" ? 0xf5a623 : 0x00c851;
+
+      const profile = await getRobloxProfile(account.username);
+      const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+      const createdStr = profile?.createdAt
+        ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+        : "N/A";
+      const ageDaysStr = profile?.ageDays != null ? `${profile.ageDays.toLocaleString()} days` : "N/A";
+      const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+      const embed = new EmbedBuilder()
+        .setTitle(`${tierLabel} Your Roblox Account`)
+        .setColor(color)
+        .addFields(
+          { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+          { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+          { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+          { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+          { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+          { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+          { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+          { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+          { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+        )
+        .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
+        .setTimestamp();
+
+      if (profile?.avatarUrl) embed.setThumbnail(profile.avatarUrl);
+      if (profileUrl) embed.setURL(profileUrl);
+
+      await interaction.reply({
+        embeds: [embed],
+        content: `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``,
+        ephemeral: true,
+      });
+      return;
+
+    } else if (id === "dm_no") {
+      const pending = pendingAccounts.get(userId);
+      if (pending) {
+        pendingAccounts.delete(userId);
+        returnPendingToStock(pending);
+      }
+      await interaction.reply({ content: "❌ Cancelled. Your account was returned to stock.", ephemeral: true });
+      return;
+
+    } else if (id === "api_redeem") {
       const modal = new ModalBuilder()
         .setCustomId("modal_redeem_key")
         .setTitle("Redeem API Key");
@@ -354,6 +420,36 @@ client.on("interactionCreate", async (interaction: Interaction) => {
   }
 });
 
+function dmOffEmbed() {
+  return new EmbedBuilder()
+    .setTitle("📵 DMs Are Off")
+    .setColor(0xff9900)
+    .setDescription(
+      "Your DMs are disabled so I can't send you the account privately.\n\n" +
+      "Would you like to receive it here instead? **Only you will see it.**"
+    )
+    .setTimestamp();
+}
+
+function dmOffRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("dm_yes")
+      .setLabel("✅ Yes, show it here")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("dm_no")
+      .setLabel("❌ No, cancel")
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+function returnPendingToStock(pending: PendingAccount) {
+  if (pending.tier === "god") addGodAccount(pending.account);
+  else if (pending.tier === "premium") addPremiumAccount(pending.account);
+  else addAccount(pending.account);
+}
+
 function checkCooldown(userId: string): number | null {
   const last = generateCooldowns.get(userId);
   if (!last) return null;
@@ -424,7 +520,6 @@ async function handleGenerate(message: Message) {
     await message.author.send({ embeds: [dmEmbed] });
     await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
     generateCooldowns.set(message.author.id, Date.now());
-
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -434,18 +529,8 @@ async function handleGenerate(message: Message) {
       ],
     });
   } catch {
-    addAccount(account);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("❌ Could Not DM You")
-          .setColor(0xff4444)
-          .setDescription(
-            "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generate` again."
-          )
-          .setTimestamp(),
-      ],
-    });
+    pendingAccounts.set(message.author.id, { account, tier: "free" });
+    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
   }
 }
 
@@ -679,18 +764,8 @@ async function handleGenerateGod(message: Message) {
       ],
     });
   } catch {
-    addGodAccount(account);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("❌ Could Not DM You")
-          .setColor(0xff4444)
-          .setDescription(
-            "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generategod` again."
-          )
-          .setTimestamp(),
-      ],
-    });
+    pendingAccounts.set(message.author.id, { account, tier: "god" });
+    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
   }
 }
 
@@ -787,18 +862,8 @@ async function handleGeneratePremium(message: Message) {
       ],
     });
   } catch {
-    addPremiumAccount(account);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("❌ Could Not DM You")
-          .setColor(0xff4444)
-          .setDescription(
-            "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generatepremium` again."
-          )
-          .setTimestamp(),
-      ],
-    });
+    pendingAccounts.set(message.author.id, { account, tier: "premium" });
+    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
   }
 }
 
