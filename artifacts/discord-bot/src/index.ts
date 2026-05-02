@@ -15,6 +15,7 @@ import {
 import axios from "axios";
 import {
   addAccount, popAccount, stockCount,
+  addGodAccount, popGodAccount, godStockCount,
   addPremiumAccount, popPremiumAccount, premiumStockCount,
 } from "./stock.js";
 import {
@@ -94,6 +95,7 @@ const PREFIX = "j!";
 const STOCK_CHANNEL_ID = "1495195376590786720";
 const STOCK_ALLOWED_USER_ID = "1230660770749087796";
 const PREMIUM_ROLE_ID = "1495200351710613566";
+const GOD_ROLE_ID = "1499806905697042492";
 
 const client = new Client({
   intents: [
@@ -107,7 +109,7 @@ const client = new Client({
 // Track active addstock sessions: userId -> step + collected data
 interface Session {
   step: "username" | "password" | "cookie";
-  isPremium: boolean;
+  tier: "free" | "premium" | "god";
   username?: string;
   password?: string;
 }
@@ -146,16 +148,22 @@ client.on("messageCreate", async (message: Message) => {
     await handleGenerate(message);
   } else if (command === "generatepremium") {
     await handleGeneratePremium(message);
+  } else if (command === "generategod") {
+    await handleGenerateGod(message);
   } else if (command === "generatealt") {
     await handleGenerateAlt(message);
   } else if (command === "addstock") {
-    await handleAddStock(message, false);
+    await handleAddStock(message, "free");
   } else if (command === "addpremiumstock") {
-    await handleAddStock(message, true);
+    await handleAddStock(message, "premium");
+  } else if (command === "addgodstock") {
+    await handleAddStock(message, "god");
   } else if (command === "stock") {
     await handleStockCount(message);
   } else if (command === "premiumstock") {
     await handlePremiumStockCount(message);
+  } else if (command === "godstock") {
+    await handleGodStockCount(message);
   } else if (command === "showapipanel") {
     await handleShowApiPanel(message);
   } else if (command === "addapikeys") {
@@ -411,8 +419,7 @@ async function handleGenerate(message: Message) {
   }
 }
 
-async function handleAddStock(message: Message, isPremium: boolean) {
-  // Restrict to allowed user only
+async function handleAddStock(message: Message, tier: "free" | "premium" | "god") {
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
       embeds: [
@@ -424,7 +431,6 @@ async function handleAddStock(message: Message, isPremium: boolean) {
     return;
   }
 
-  // Restrict to the stock channel
   if (message.channel.id !== STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
@@ -436,14 +442,15 @@ async function handleAddStock(message: Message, isPremium: boolean) {
     return;
   }
 
-  // Start a session for this user
-  sessions.set(message.author.id, { step: "username", isPremium });
+  sessions.set(message.author.id, { step: "username", tier });
 
-  const label = isPremium ? "⭐ Add Premium Stock" : "➕ Add Stock";
+  const label = tier === "god" ? "🌟 Add God Stock" : tier === "premium" ? "⭐ Add Premium Stock" : "➕ Add Stock";
+  const color = tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : 0xe8192c;
+
   await message.reply({
     embeds: [
       new EmbedBuilder()
-        .setColor(isPremium ? 0xf5a623 : 0xe8192c)
+        .setColor(color)
         .setTitle(label)
         .setDescription("**Roblox Username?**\n\nType the username of the account below."),
     ],
@@ -484,20 +491,22 @@ async function handleSessionReply(message: Message) {
     });
   } else if (session.step === "cookie") {
     const cookie = input;
-    const isPremium = session.isPremium;
+    const { tier } = session;
     sessions.delete(message.author.id);
 
     const account = { username: session.username!, password: session.password!, cookie };
-    if (isPremium) {
+    if (tier === "god") {
+      addGodAccount(account);
+    } else if (tier === "premium") {
       addPremiumAccount(account);
     } else {
       addAccount(account);
     }
 
-    const count = isPremium ? premiumStockCount() : stockCount();
-    const label = isPremium ? "✅ Account Added to Premium Stock" : "✅ Account Added to Stock";
-    const color = isPremium ? 0xf5a623 : 0x00c851;
-    const stockLabel = isPremium ? "⭐ Premium Stock" : "📦 Total Stock";
+    const count = tier === "god" ? godStockCount() : tier === "premium" ? premiumStockCount() : stockCount();
+    const label = tier === "god" ? "✅ Account Added to God Stock" : tier === "premium" ? "✅ Account Added to Premium Stock" : "✅ Account Added to Stock";
+    const color = tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : 0x00c851;
+    const stockLabel = tier === "god" ? "🌟 God Stock" : tier === "premium" ? "⭐ Premium Stock" : "📦 Total Stock";
 
     await message.reply({
       embeds: [
@@ -535,6 +544,124 @@ async function handlePremiumStockCount(message: Message) {
         .setDescription(`⭐ **Premium Stock:** \`${count}\` account(s) available`),
     ],
   });
+}
+
+async function handleGodStockCount(message: Message) {
+  const count = godStockCount();
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x9b59b6)
+        .setDescription(`🌟 **God Stock:** \`${count}\` account(s) available`),
+    ],
+  });
+}
+
+async function handleGenerateGod(message: Message) {
+  const remaining = checkCooldown(message.author.id);
+  if (remaining !== null) {
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.ceil((remaining % 60000) / 1000);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("⏳ Cooldown Active")
+          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
+      ],
+    });
+    return;
+  }
+
+  const member = await message.guild!.members.fetch(message.author.id).catch(() => null);
+  const hasGod = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+
+  if (!hasGod) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🌟 God Tier Required")
+          .setColor(0x9b59b6)
+          .setDescription(
+            "You need the **God** role to use this command.\n\nUpgrade to God tier to access God-tier Roblox accounts!"
+          ),
+      ],
+    });
+    return;
+  }
+
+  const account = popGodAccount();
+
+  if (!account) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ God Stock Empty")
+          .setColor(0xff4444)
+          .setDescription("There are no God-tier accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  const profile = await getRobloxProfile(account.username);
+
+  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+  const createdStr = profile?.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+    ? `${profile.ageDays.toLocaleString()} days`
+    : "N/A";
+  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+  const dmEmbed = new EmbedBuilder()
+    .setTitle("🌟 Your God-Tier Roblox Account")
+    .setColor(0x9b59b6)
+    .addFields(
+      { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+      { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+      { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+      { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+      { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+      { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+    )
+    .setFooter({ text: "🌟 God-Tier Account — Login at roblox.com" })
+    .setTimestamp();
+
+  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+  if (profileUrl) dmEmbed.setURL(profileUrl);
+
+  try {
+    await message.author.send({ embeds: [dmEmbed] });
+    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
+    generateCooldowns.set(message.author.id, Date.now());
+
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x9b59b6)
+          .setDescription(`🌟 Check your DMs, ${message.author}! Your God-tier account has been sent.`)
+          .setTimestamp(),
+      ],
+    });
+  } catch {
+    addGodAccount(account);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Could Not DM You")
+          .setColor(0xff4444)
+          .setDescription(
+            "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generategod` again."
+          )
+          .setTimestamp(),
+      ],
+    });
+  }
 }
 
 async function handleGeneratePremium(message: Message) {
@@ -994,10 +1121,13 @@ async function handleHelp(message: Message) {
       { name: "`j!stock`", value: "Check how many free accounts are in stock." },
       { name: "`j!generatepremium`", value: "⭐ Get a premium account (requires Premium role). *(9m cooldown)*" },
       { name: "`j!premiumstock`", value: "⭐ Check how many premium accounts are in stock." },
+      { name: "`j!generategod`", value: "🌟 Get a God-tier account (requires God role). *(9m cooldown)*" },
+      { name: "`j!godstock`", value: "🌟 Check how many God-tier accounts are in stock." },
       { name: "`j!generatealt`", value: "🔑 Deliver an account to your configured webhook (requires API key)." },
       { name: "`j!showapipanel`", value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
       { name: "`j!addstock`", value: "Add an account to free stock (restricted)." },
       { name: "`j!addpremiumstock`", value: "⭐ Add an account to premium stock (restricted)." },
+      { name: "`j!addgodstock`", value: "🌟 Add an account to God stock (restricted)." },
       { name: "`j!addapikeys <key...>`", value: "🔑 Add API keys to the pool (restricted)." },
       { name: "`j!user <username>`", value: "Look up a Roblox user's full profile." },
       { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
