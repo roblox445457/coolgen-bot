@@ -270,6 +270,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         content: `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``,
         ephemeral: true,
       });
+      await interaction.message.delete().catch(() => null);
       return;
 
     } else if (id === "dm_no") {
