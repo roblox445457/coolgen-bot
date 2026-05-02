@@ -7,6 +7,7 @@ const STOCK_FILE = join(__dirname, "../stock.json");
 const PREMIUM_STOCK_FILE = join(__dirname, "../premium-stock.json");
 const GOD_STOCK_FILE = join(__dirname, "../god-stock.json");
 const AGE_GROUP_STOCK_FILE = join(__dirname, "../age-group-stock.json");
+const RARE_STOCK_FILE = join(__dirname, "../rare-stock.json");
 
 export interface Account {
   username: string;
@@ -105,4 +106,24 @@ export function popAgeGroupAccount(): Account | null {
 
 export function ageGroupStockCount(): number {
   return loadFile(AGE_GROUP_STOCK_FILE).length;
+}
+
+// ── Rare Usernames stock ──────────────────────────────────────────────────────
+
+export function addRareAccount(account: Account): void {
+  const accounts = loadFile(RARE_STOCK_FILE);
+  accounts.push(account);
+  saveFile(RARE_STOCK_FILE, accounts);
+}
+
+export function popRareAccount(): Account | null {
+  const accounts = loadFile(RARE_STOCK_FILE);
+  if (accounts.length === 0) return null;
+  const account = accounts.shift()!;
+  saveFile(RARE_STOCK_FILE, accounts);
+  return account;
+}
+
+export function rareStockCount(): number {
+  return loadFile(RARE_STOCK_FILE).length;
 }
