@@ -119,9 +119,39 @@ const sessions = new Map<string, Session>();
 const GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 const generateCooldowns = new Map<string, number>();
 
-client.once("clientReady", (c) => {
+// Home guild is resolved at startup from the stock channel
+let HOME_GUILD_ID: string | null = null;
+
+client.once("clientReady", async (c) => {
   console.log(`Bot is online as ${c.user.tag}`);
   console.log(`Prefix: ${PREFIX}`);
+
+  // Resolve home guild from the stock channel
+  try {
+    const channel = await c.channels.fetch(STOCK_CHANNEL_ID);
+    if (channel && "guildId" in channel) {
+      HOME_GUILD_ID = channel.guildId;
+      console.log(`Home guild ID: ${HOME_GUILD_ID}`);
+    }
+  } catch {
+    console.error("Could not resolve home guild from stock channel.");
+  }
+
+  // Leave any guild that isn't home
+  for (const guild of c.guilds.cache.values()) {
+    if (HOME_GUILD_ID && guild.id !== HOME_GUILD_ID) {
+      console.log(`Leaving non-home guild: ${guild.name} (${guild.id})`);
+      await guild.leave().catch(() => null);
+    }
+  }
+});
+
+// Auto-leave any server the bot gets invited to that isn't home
+client.on("guildCreate", async (guild) => {
+  if (!HOME_GUILD_ID || guild.id !== HOME_GUILD_ID) {
+    console.log(`Invited to non-home guild: ${guild.name} (${guild.id}) — leaving.`);
+    await guild.leave().catch(() => null);
+  }
 });
 
 client.on("messageCreate", async (message: Message) => {
