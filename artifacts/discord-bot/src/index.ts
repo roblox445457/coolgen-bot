@@ -278,7 +278,8 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         pendingAccounts.delete(userId);
         returnPendingToStock(pending);
       }
-      await interaction.reply({ content: "❌ Cancelled. Your account was returned to stock.", ephemeral: true });
+      await interaction.reply({ content: "❌ Cancelled.", ephemeral: true });
+      await interaction.message.delete().catch(() => null);
       return;
 
     } else if (id === "api_redeem") {
