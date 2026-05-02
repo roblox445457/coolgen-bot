@@ -4,12 +4,23 @@ import {
   Message,
   EmbedBuilder,
   TextChannel,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  Interaction,
 } from "discord.js";
 import axios from "axios";
 import {
   addAccount, popAccount, stockCount,
   addPremiumAccount, popPremiumAccount, premiumStockCount,
 } from "./stock.js";
+import {
+  addApiKeys, apiKeyPoolCount,
+  redeemKey, resetHwid, setWebhook, getApiData,
+} from "./api-panel.js";
 
 interface RobloxProfile {
   userId: number;
@@ -102,6 +113,10 @@ interface Session {
 }
 const sessions = new Map<string, Session>();
 
+// 9-minute cooldown for generate commands (per user)
+const GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
+const generateCooldowns = new Map<string, number>();
+
 client.once("clientReady", (c) => {
   console.log(`Bot is online as ${c.user.tag}`);
   console.log(`Prefix: ${PREFIX}`);
@@ -131,6 +146,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleGenerate(message);
   } else if (command === "generatepremium") {
     await handleGeneratePremium(message);
+  } else if (command === "generatealt") {
+    await handleGenerateAlt(message);
   } else if (command === "addstock") {
     await handleAddStock(message, false);
   } else if (command === "addpremiumstock") {
@@ -139,6 +156,10 @@ client.on("messageCreate", async (message: Message) => {
     await handleStockCount(message);
   } else if (command === "premiumstock") {
     await handlePremiumStockCount(message);
+  } else if (command === "showapipanel") {
+    await handleShowApiPanel(message);
+  } else if (command === "addapikeys") {
+    await handleAddApiKeys(message, args.slice(1));
   } else if (command === "user") {
     await handleUser(message, args[1]);
   } else if (command === "accountdays") {
@@ -152,7 +173,172 @@ client.on("messageCreate", async (message: Message) => {
   }
 });
 
+client.on("interactionCreate", async (interaction: Interaction) => {
+  if (interaction.isButton()) {
+    const id = interaction.customId;
+
+    if (id === "api_redeem") {
+      const modal = new ModalBuilder()
+        .setCustomId("modal_redeem_key")
+        .setTitle("Redeem API Key");
+      const input = new TextInputBuilder()
+        .setCustomId("key_input")
+        .setLabel("Enter your API key")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("XXXX-XXXX-XXXX-XXXX")
+        .setRequired(true);
+      modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+      await interaction.showModal(modal);
+
+    } else if (id === "api_reset_hwid") {
+      const userId = interaction.user.id;
+      const deleted = resetHwid(userId);
+      if (deleted) {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("✅ HWID Reset")
+              .setDescription("Your API key and data have been deleted. You can redeem a new key."),
+          ],
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setDescription("❌ You don't have an active API key to reset."),
+          ],
+          ephemeral: true,
+        });
+      }
+
+    } else if (id === "api_set_webhook") {
+      const userId = interaction.user.id;
+      const data = getApiData(userId);
+      if (!data) {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setDescription("❌ You need to redeem an API key first before setting a webhook."),
+          ],
+          ephemeral: true,
+        });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId("modal_set_webhook")
+        .setTitle("Set Webhook URL");
+      const input = new TextInputBuilder()
+        .setCustomId("webhook_input")
+        .setLabel("Discord Webhook URL")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("https://discord.com/api/webhooks/...")
+        .setRequired(true);
+      modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+      await interaction.showModal(modal);
+    }
+
+  } else if (interaction.isModalSubmit()) {
+    const id = interaction.customId;
+    const userId = interaction.user.id;
+
+    if (id === "modal_redeem_key") {
+      const key = interaction.fields.getTextInputValue("key_input").trim();
+      const result = redeemKey(userId, key);
+      if (result === "success") {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("✅ Key Redeemed!")
+              .setDescription(`Your API key has been activated.\n\nUse **Set Webhook** in the panel to configure where accounts are sent when you use \`j!generatealt\`.`),
+          ],
+          ephemeral: true,
+        });
+      } else if (result === "already_has_key") {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setDescription("❌ You already have an active API key. Use **Reset HWID** to remove it first."),
+          ],
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setDescription("❌ Invalid key. Double-check and try again."),
+          ],
+          ephemeral: true,
+        });
+      }
+
+    } else if (id === "modal_set_webhook") {
+      const url = interaction.fields.getTextInputValue("webhook_input").trim();
+      if (!url.startsWith("https://discord.com/api/webhooks/") && !url.startsWith("https://discordapp.com/api/webhooks/")) {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setDescription("❌ That doesn't look like a valid Discord webhook URL. It should start with `https://discord.com/api/webhooks/`."),
+          ],
+          ephemeral: true,
+        });
+        return;
+      }
+      const result = setWebhook(userId, url);
+      if (result === "success") {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("✅ Webhook Set!")
+              .setDescription(`Your webhook has been saved.\n\nUse \`j!generatealt\` and accounts will be delivered to your webhook channel.`),
+          ],
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setDescription("❌ You need to redeem an API key first."),
+          ],
+          ephemeral: true,
+        });
+      }
+    }
+  }
+});
+
+function checkCooldown(userId: string): number | null {
+  const last = generateCooldowns.get(userId);
+  if (!last) return null;
+  const remaining = GENERATE_COOLDOWN_MS - (Date.now() - last);
+  return remaining > 0 ? remaining : null;
+}
+
 async function handleGenerate(message: Message) {
+  const remaining = checkCooldown(message.author.id);
+  if (remaining !== null) {
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.ceil((remaining % 60000) / 1000);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("⏳ Cooldown Active")
+          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
+      ],
+    });
+    return;
+  }
+
   const account = popAccount();
 
   if (!account) {
@@ -203,6 +389,7 @@ async function handleGenerate(message: Message) {
     if (profileUrl) dmEmbed.setURL(profileUrl);
 
     await message.author.send({ embeds: [dmEmbed] });
+    generateCooldowns.set(message.author.id, Date.now());
 
     const successEmbed = new EmbedBuilder()
       .setColor(0x00c851)
@@ -210,7 +397,6 @@ async function handleGenerate(message: Message) {
       .setTimestamp();
     await message.reply({ embeds: [successEmbed] });
   } catch {
-    // DMs are closed — put the account back? No, just warn them.
     const failEmbed = new EmbedBuilder()
       .setTitle("❌ Could Not DM You")
       .setColor(0xff4444)
@@ -218,7 +404,6 @@ async function handleGenerate(message: Message) {
         "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generate` again."
       )
       .setTimestamp();
-    // Put account back since we couldn't deliver it
     addAccount(account);
     await message.reply({ embeds: [failEmbed] });
   }
@@ -351,13 +536,16 @@ async function handlePremiumStockCount(message: Message) {
 }
 
 async function handleGeneratePremium(message: Message) {
-  // Must be used in a server
-  if (!message.guild) {
+  const remaining = checkCooldown(message.author.id);
+  if (remaining !== null) {
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.ceil((remaining % 60000) / 1000);
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in a server."),
+          .setTitle("⏳ Cooldown Active")
+          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
       ],
     });
     return;
@@ -432,6 +620,7 @@ async function handleGeneratePremium(message: Message) {
     if (profileUrl) dmEmbed.setURL(profileUrl);
 
     await message.author.send({ embeds: [dmEmbed] });
+    generateCooldowns.set(message.author.id, Date.now());
 
     const successEmbed = new EmbedBuilder()
       .setColor(0xf5a623)
@@ -447,6 +636,184 @@ async function handleGeneratePremium(message: Message) {
           .setColor(0xff4444)
           .setDescription(
             "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generatepremium` again."
+          ),
+      ],
+    });
+  }
+}
+
+async function handleShowApiPanel(message: Message) {
+  const data = getApiData(message.author.id);
+  const hasKey = !!data;
+  const hasWebhook = !!data?.webhook;
+
+  const statusLines = [
+    `🔑 **API Key:** ${hasKey ? "✅ Active" : "❌ None"}`,
+    `🔗 **Webhook:** ${hasWebhook ? "✅ Set" : "❌ Not set"}`,
+  ];
+
+  const embed = new EmbedBuilder()
+    .setTitle("🛠️ API Panel")
+    .setColor(0xe8192c)
+    .setDescription(
+      statusLines.join("\n") +
+      "\n\n• **Redeem Key** — activate an API key\n" +
+      "• **Reset HWID** — delete your key & data\n" +
+      "• **Set Webhook** — set where `j!generatealt` delivers accounts"
+    )
+    .setTimestamp();
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("api_redeem")
+      .setLabel("🔑 Redeem Key")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("api_reset_hwid")
+      .setLabel("🔄 Reset HWID")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("api_set_webhook")
+      .setLabel("🔗 Set Webhook")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  await message.reply({ embeds: [embed], components: [row] });
+}
+
+async function handleAddApiKeys(message: Message, keys: string[]) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ You don't have permission to use this command."),
+      ],
+    });
+    return;
+  }
+
+  if (keys.length === 0) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ Provide at least one key. Usage: `j!addapikeys KEY1 KEY2 ...`"),
+      ],
+    });
+    return;
+  }
+
+  const added = addApiKeys(keys);
+  const total = apiKeyPoolCount();
+
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00c851)
+        .setTitle("✅ API Keys Added")
+        .addFields(
+          { name: "➕ Added", value: `\`${added}\``, inline: true },
+          { name: "📦 Total in Pool", value: `\`${total}\``, inline: true },
+        )
+        .setTimestamp(),
+    ],
+  });
+}
+
+async function handleGenerateAlt(message: Message) {
+  const data = getApiData(message.author.id);
+
+  if (!data) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ No API Key")
+          .setDescription("You need to redeem an API key first. Use `j!showapipanel` to get started."),
+      ],
+    });
+    return;
+  }
+
+  if (!data.webhook) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ No Webhook Set")
+          .setDescription("You have an API key but no webhook configured. Use `j!showapipanel` → **Set Webhook**."),
+      ],
+    });
+    return;
+  }
+
+  const account = popAccount();
+
+  if (!account) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Out of Stock")
+          .setColor(0xff4444)
+          .setDescription("There are no Roblox accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  try {
+    const profile = await getRobloxProfile(account.username);
+
+    const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+    const createdStr = profile?.createdAt
+      ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      : "N/A";
+    const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+      ? `${profile.ageDays.toLocaleString()} days`
+      : "N/A";
+    const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+    const webhookEmbed: Record<string, unknown> = {
+      title: "🎮 Roblox Account (via API)",
+      color: 0xe8192c,
+      fields: [
+        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+        { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+        { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+        { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+        { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+        { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+        { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+        { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+        { name: "🍪 Security Cookie (.ROBLOSECURITY)", value: `\`\`\`${account.cookie}\`\`\`` },
+      ],
+      footer: { text: `Requested by ${message.author.tag} via j!generatealt` },
+      timestamp: new Date().toISOString(),
+      ...(profileUrl ? { url: profileUrl } : {}),
+      ...(profile?.avatarUrl ? { thumbnail: { url: profile.avatarUrl } } : {}),
+    };
+
+    await axios.post(data.webhook, { embeds: [webhookEmbed] });
+
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setDescription(`✅ Account delivered to your webhook channel, ${message.author}!`)
+          .setTimestamp(),
+      ],
+    });
+  } catch {
+    addAccount(account);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Webhook Delivery Failed")
+          .setColor(0xff4444)
+          .setDescription(
+            "Couldn't send to your webhook. Make sure the URL is valid and the webhook still exists.\n\n**Account was not wasted** — try again."
           ),
       ],
     });
@@ -604,15 +971,17 @@ async function handleHelp(message: Message) {
     .setTitle("Jelly Bot — Help")
     .setColor(0xe8192c)
     .addFields(
-      { name: "`j!generate`", value: "Get a free Roblox account sent to your DMs." },
+      { name: "`j!generate`", value: "Get a free Roblox account sent to your DMs. *(9m cooldown)*" },
       { name: "`j!stock`", value: "Check how many free accounts are in stock." },
-      { name: "`j!generatepremium`", value: "⭐ Get a premium Roblox account (requires Premium role)." },
+      { name: "`j!generatepremium`", value: "⭐ Get a premium account (requires Premium role). *(9m cooldown)*" },
       { name: "`j!premiumstock`", value: "⭐ Check how many premium accounts are in stock." },
+      { name: "`j!generatealt`", value: "🔑 Deliver an account to your configured webhook (requires API key)." },
+      { name: "`j!showapipanel`", value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
       { name: "`j!addstock`", value: "Add an account to free stock (restricted)." },
       { name: "`j!addpremiumstock`", value: "⭐ Add an account to premium stock (restricted)." },
+      { name: "`j!addapikeys <key...>`", value: "🔑 Add API keys to the pool (restricted)." },
       { name: "`j!user <username>`", value: "Look up a Roblox user's full profile." },
       { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
-      { name: "`j!help generate`", value: "Detailed help for the generate command." },
       { name: "`j!help`", value: "Show this help message." },
     )
     .setFooter({ text: "Prefix: j!" })
