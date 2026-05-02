@@ -202,6 +202,8 @@ client.on("messageCreate", async (message: Message) => {
     await handlePremiumStockCount(message);
   } else if (command === "godstock") {
     await handleGodStockCount(message);
+  } else if (command === "allstock") {
+    await handleAllStock(message);
   } else if (command === "showapipanel") {
     await handleShowApiPanel(message);
   } else if (command === "addapikeys") {
@@ -680,6 +682,27 @@ async function handleGodStockCount(message: Message) {
       new EmbedBuilder()
         .setColor(0x9b59b6)
         .setDescription(`🌟 **God Stock:** \`${count}\` account(s) available`),
+    ],
+  });
+}
+
+async function handleAllStock(message: Message) {
+  const free = stockCount();
+  const premium = premiumStockCount();
+  const god = godStockCount();
+  const total = free + premium + god;
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("📦 All Stock")
+        .addFields(
+          { name: "🟢 Free", value: `\`${free}\` account(s)`, inline: true },
+          { name: "🟡 Premium", value: `\`${premium}\` account(s)`, inline: true },
+          { name: "🟣 God", value: `\`${god}\` account(s)`, inline: true },
+        )
+        .setFooter({ text: `Total: ${total} account(s)` })
+        .setTimestamp(),
     ],
   });
 }
