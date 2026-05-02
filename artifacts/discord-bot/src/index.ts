@@ -1159,6 +1159,26 @@ async function handleGenerateRare(message: Message) {
     });
     return;
   }
+
+  const joinedAt = message.member?.joinedAt;
+  const daysSinceJoin = joinedAt ? (Date.now() - joinedAt.getTime()) / (1000 * 60 * 60 * 24) : 0;
+  if (daysSinceJoin < 5) {
+    const daysLeft = Math.ceil(5 - daysSinceJoin);
+    const unlockTimestamp = Math.floor((joinedAt!.getTime() + 5 * 24 * 60 * 60 * 1000) / 1000);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ Server Membership Required")
+          .setDescription(
+            `You must be a member of this server for **at least 5 days** to generate a Rare Username account.\n\n` +
+            `You joined <t:${Math.floor(joinedAt!.getTime() / 1000)}:R> and will be eligible <t:${unlockTimestamp}:R> (**${daysLeft} day${daysLeft !== 1 ? "s" : ""} left**).`
+          ),
+      ],
+    });
+    return;
+  }
+
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
     const mins = Math.floor(remaining / 60000);
