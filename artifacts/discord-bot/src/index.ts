@@ -351,61 +351,63 @@ async function handleGenerate(message: Message) {
     return;
   }
 
-  // Try to DM the user
+  const profile = await getRobloxProfile(account.username);
+
+  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+  const createdStr = profile?.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+    ? `${profile.ageDays.toLocaleString()} days`
+    : "N/A";
+  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+  const dmEmbed = new EmbedBuilder()
+    .setTitle("🎮 Your Roblox Account")
+    .setColor(0x00c851)
+    .addFields(
+      { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+      { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+      { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+      { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+      { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+      { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+    )
+    .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
+    .setTimestamp();
+
+  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+  if (profileUrl) dmEmbed.setURL(profileUrl);
+
   try {
-    const profile = await getRobloxProfile(account.username);
-
-    const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
-    const createdStr = profile?.createdAt
-      ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-      : "N/A";
-    const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
-      ? `${profile.ageDays.toLocaleString()} days`
-      : "N/A";
-    const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
-
-    const dmEmbed = new EmbedBuilder()
-      .setTitle("🎮 Your Roblox Account")
-      .setColor(0x00c851)
-      .addFields(
-        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-        { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-        { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-        { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-        { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-        { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-        { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-        { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-        {
-          name: "🍪 Security Cookie (.ROBLOSECURITY)",
-          value: `\`\`\`${account.cookie}\`\`\``,
-        },
-      )
-      .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
-      .setTimestamp();
-
-    if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
-    if (profileUrl) dmEmbed.setURL(profileUrl);
-
     await message.author.send({ embeds: [dmEmbed] });
+    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
     generateCooldowns.set(message.author.id, Date.now());
 
-    const successEmbed = new EmbedBuilder()
-      .setColor(0x00c851)
-      .setDescription(`✅ Check your DMs, ${message.author}! Your account has been sent.`)
-      .setTimestamp();
-    await message.reply({ embeds: [successEmbed] });
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setDescription(`✅ Check your DMs, ${message.author}! Your account has been sent.`)
+          .setTimestamp(),
+      ],
+    });
   } catch {
-    const failEmbed = new EmbedBuilder()
-      .setTitle("❌ Could Not DM You")
-      .setColor(0xff4444)
-      .setDescription(
-        "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generate` again."
-      )
-      .setTimestamp();
     addAccount(account);
-    await message.reply({ embeds: [failEmbed] });
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Could Not DM You")
+          .setColor(0xff4444)
+          .setDescription(
+            "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generate` again."
+          )
+          .setTimestamp(),
+      ],
+    });
   }
 }
 
@@ -583,50 +585,50 @@ async function handleGeneratePremium(message: Message) {
     return;
   }
 
+  const profile = await getRobloxProfile(account.username);
+
+  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+  const createdStr = profile?.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+    ? `${profile.ageDays.toLocaleString()} days`
+    : "N/A";
+  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+  const dmEmbed = new EmbedBuilder()
+    .setTitle("⭐ Your Premium Roblox Account")
+    .setColor(0xf5a623)
+    .addFields(
+      { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+      { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+      { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+      { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+      { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+      { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+    )
+    .setFooter({ text: "⭐ Premium Account — Login at roblox.com" })
+    .setTimestamp();
+
+  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+  if (profileUrl) dmEmbed.setURL(profileUrl);
+
   try {
-    const profile = await getRobloxProfile(account.username);
-
-    const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
-    const createdStr = profile?.createdAt
-      ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-      : "N/A";
-    const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
-      ? `${profile.ageDays.toLocaleString()} days`
-      : "N/A";
-    const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
-
-    const dmEmbed = new EmbedBuilder()
-      .setTitle("⭐ Your Premium Roblox Account")
-      .setColor(0xf5a623)
-      .addFields(
-        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-        { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-        { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-        { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-        { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-        { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-        { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-        { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-        {
-          name: "🍪 Security Cookie (.ROBLOSECURITY)",
-          value: `\`\`\`${account.cookie}\`\`\``,
-        },
-      )
-      .setFooter({ text: "⭐ Premium Account — Login at roblox.com" })
-      .setTimestamp();
-
-    if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
-    if (profileUrl) dmEmbed.setURL(profileUrl);
-
     await message.author.send({ embeds: [dmEmbed] });
+    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
     generateCooldowns.set(message.author.id, Date.now());
 
-    const successEmbed = new EmbedBuilder()
-      .setColor(0xf5a623)
-      .setDescription(`⭐ Check your DMs, ${message.author}! Your premium account has been sent.`)
-      .setTimestamp();
-    await message.reply({ embeds: [successEmbed] });
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xf5a623)
+          .setDescription(`⭐ Check your DMs, ${message.author}! Your premium account has been sent.`)
+          .setTimestamp(),
+      ],
+    });
   } catch {
     addPremiumAccount(account);
     await message.reply({
@@ -636,7 +638,8 @@ async function handleGeneratePremium(message: Message) {
           .setColor(0xff4444)
           .setDescription(
             "I couldn't send you a DM. Please enable DMs from server members and try again.\n\n**Your account was not wasted** — please try `j!generatepremium` again."
-          ),
+          )
+          .setTimestamp(),
       ],
     });
   }
