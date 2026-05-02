@@ -127,6 +127,16 @@ interface PendingAccount {
 }
 const pendingAccounts = new Map<string, PendingAccount>();
 
+// Pending captcha verifications
+interface PendingCaptcha {
+  account: Account;
+  tier: "free" | "premium" | "god";
+  correctColor: string;
+  originalMessage: Message;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+const pendingCaptchas = new Map<string, PendingCaptcha>();
+
 // Home guild is resolved at startup from the stock channel
 let HOME_GUILD_ID: string | null = null;
 
@@ -292,6 +302,35 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       }
       await interaction.reply({ content: "❌ Cancelled.", ephemeral: true });
       await interaction.message.delete().catch(() => null);
+      return;
+
+    } else if (id.startsWith("captcha_")) {
+      const pending = pendingCaptchas.get(userId);
+      if (!pending) {
+        await interaction.reply({ content: "❌ No captcha found — it may have expired.", ephemeral: true });
+        return;
+      }
+      clearTimeout(pending.timeoutHandle);
+      pendingCaptchas.delete(userId);
+      await interaction.message.delete().catch(() => null);
+
+      if (id === pending.correctColor) {
+        await interaction.deferUpdate().catch(() => null);
+        await deliverAccount(pending.account, pending.tier, pending.originalMessage);
+      } else {
+        if (pending.tier === "god") addGodAccount(pending.account);
+        else if (pending.tier === "premium") addPremiumAccount(pending.account);
+        else addAccount(pending.account);
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("❌ Wrong Color!")
+              .setDescription("Incorrect answer. The account was returned to stock.\n\nTry generating again."),
+          ],
+          ephemeral: true,
+        });
+      }
       return;
 
     } else if (id === "api_redeem") {
@@ -463,6 +502,141 @@ function returnPendingToStock(pending: PendingAccount) {
   else addAccount(pending.account);
 }
 
+// ── Captcha ───────────────────────────────────────────────────────────────────
+
+const CAPTCHA_COLORS = [
+  { id: "captcha_red",    emoji: "🔴", label: "Red",    style: ButtonStyle.Danger    },
+  { id: "captcha_green",  emoji: "🟢", label: "Green",  style: ButtonStyle.Success   },
+  { id: "captcha_blue",   emoji: "🔵", label: "Blue",   style: ButtonStyle.Primary   },
+  { id: "captcha_yellow", emoji: "🟡", label: "Yellow", style: ButtonStyle.Secondary },
+] as const;
+
+function captchaRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    CAPTCHA_COLORS.map((c) =>
+      new ButtonBuilder().setCustomId(c.id).setLabel(`${c.emoji} ${c.label}`).setStyle(c.style)
+    )
+  );
+}
+
+async function sendCaptcha(
+  message: Message,
+  account: Account,
+  tier: "free" | "premium" | "god"
+) {
+  const correct = CAPTCHA_COLORS[Math.floor(Math.random() * CAPTCHA_COLORS.length)];
+
+  const captchaMsg = await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("🛡️ Human Verification")
+        .setDescription(
+          `To receive your account, click the **${correct.emoji} ${correct.label}** button below.\n\n⏰ You have **30 seconds** to respond.`
+        )
+        .setFooter({ text: "Wrong answer or timeout returns the account to stock." }),
+    ],
+    components: [captchaRow()],
+  });
+
+  const timeoutHandle = setTimeout(async () => {
+    if (pendingCaptchas.has(message.author.id)) {
+      pendingCaptchas.delete(message.author.id);
+      if (tier === "god") addGodAccount(account);
+      else if (tier === "premium") addPremiumAccount(account);
+      else addAccount(account);
+      await captchaMsg
+        .edit({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("⏰ Verification Timed Out")
+              .setDescription("You didn't respond in time. The account was returned to stock."),
+          ],
+          components: [],
+        })
+        .catch(() => null);
+      setTimeout(() => captchaMsg.delete().catch(() => null), 5_000);
+    }
+  }, 30_000);
+
+  pendingCaptchas.set(message.author.id, {
+    account,
+    tier,
+    correctColor: correct.id,
+    originalMessage: message,
+    timeoutHandle,
+  });
+}
+
+// ── Shared account delivery ───────────────────────────────────────────────────
+
+async function deliverAccount(
+  account: Account,
+  tier: "free" | "premium" | "god",
+  message: Message
+) {
+  const profile = await getRobloxProfile(account.username);
+  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+  const createdStr = profile?.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile?.ageDays != null ? `${profile.ageDays.toLocaleString()} days` : "N/A";
+  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+  const tierLabel =
+    tier === "god" ? "🌟 Your God-Tier Roblox Account"
+    : tier === "premium" ? "⭐ Your Premium Roblox Account"
+    : "🎮 Your Roblox Account";
+  const color = tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : 0x00c851;
+  const footer =
+    tier === "god" ? "🌟 God-Tier Account — Login at roblox.com"
+    : tier === "premium" ? "⭐ Premium Account — Login at roblox.com"
+    : "Login at roblox.com — keep these credentials safe!";
+  const successEmoji = tier === "god" ? "🌟" : tier === "premium" ? "⭐" : "✅";
+
+  const dmEmbed = new EmbedBuilder()
+    .setTitle(tierLabel)
+    .setColor(color)
+    .addFields(
+      { name: "👤 Username",      value: `\`${account.username}\``,                          inline: true },
+      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``,  inline: true },
+      { name: "🆔 User ID",       value: `\`${profile?.userId ?? "N/A"}\``,                  inline: true },
+      { name: "🔑 Password",      value: `\`${account.password}\``,                          inline: true },
+      { name: "📅 Created",       value: `\`${createdStr}\``,                                inline: true },
+      { name: "⏳ Account Age",   value: `\`${ageDaysStr}\``,                                inline: true },
+      { name: "👫 Friends",       value: `\`${fmt(profile?.friends ?? null)}\``,             inline: true },
+      { name: "👥 Followers",     value: `\`${fmt(profile?.followers ?? null)}\``,           inline: true },
+      { name: "➡️ Following",     value: `\`${fmt(profile?.following ?? null)}\``,           inline: true },
+    )
+    .setFooter({ text: footer })
+    .setTimestamp();
+
+  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+  if (profileUrl) dmEmbed.setURL(profileUrl);
+
+  generateCooldowns.set(message.author.id, Date.now());
+  const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
+
+  try {
+    await message.author.send({ embeds: [dmEmbed] });
+    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(color)
+          .setDescription(
+            `${successEmoji} Check your DMs, ${message.author}! Your account has been sent.\n⏳ You can generate again <t:${cdEnd}:R>`
+          )
+          .setTimestamp(),
+      ],
+    });
+  } catch {
+    pendingAccounts.set(message.author.id, { account, tier });
+    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
+  }
+}
+
 function checkCooldown(userId: string): number | null {
   const last = generateCooldowns.get(userId);
   if (!last) return null;
@@ -487,65 +661,20 @@ async function handleGenerate(message: Message) {
   }
 
   const account = popAccount();
-
   if (!account) {
-    const emptyEmbed = new EmbedBuilder()
-      .setTitle("❌ Out of Stock")
-      .setColor(0xff4444)
-      .setDescription("There are no Roblox accounts in stock right now. Check back later!")
-      .setTimestamp();
-    await message.reply({ embeds: [emptyEmbed] });
-    return;
-  }
-
-  const profile = await getRobloxProfile(account.username);
-
-  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
-  const createdStr = profile?.createdAt
-    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-    : "N/A";
-  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
-    ? `${profile.ageDays.toLocaleString()} days`
-    : "N/A";
-  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
-
-  const dmEmbed = new EmbedBuilder()
-    .setTitle("🎮 Your Roblox Account")
-    .setColor(0x00c851)
-    .addFields(
-      { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-      { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-      { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-      { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-      { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-      { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-    )
-    .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
-    .setTimestamp();
-
-  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
-  if (profileUrl) dmEmbed.setURL(profileUrl);
-
-  try {
-    await message.author.send({ embeds: [dmEmbed] });
-    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
-    generateCooldowns.set(message.author.id, Date.now());
-    const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
     await message.reply({
       embeds: [
         new EmbedBuilder()
-          .setColor(0x00c851)
-          .setDescription(`✅ Check your DMs, ${message.author}! Your account has been sent.\n⏳ You can generate again <t:${cdEnd}:R>`)
+          .setTitle("❌ Out of Stock")
+          .setColor(0xff4444)
+          .setDescription("There are no Roblox accounts in stock right now. Check back later!")
           .setTimestamp(),
       ],
     });
-  } catch {
-    pendingAccounts.set(message.author.id, { account, tier: "free" });
-    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
+    return;
   }
+
+  await sendCaptcha(message, account, "free");
 }
 
 async function handleAddStock(message: Message, tier: "free" | "premium" | "god") {
@@ -724,24 +853,19 @@ async function handleGenerateGod(message: Message) {
   }
 
   const member = await message.guild!.members.fetch(message.author.id).catch(() => null);
-  const hasGod = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
-
-  if (!hasGod) {
+  if (!(member?.roles.cache.has(GOD_ROLE_ID) ?? false)) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setTitle("🌟 God Tier Required")
           .setColor(0x9b59b6)
-          .setDescription(
-            "You need the **God** role to use this command.\n\nUpgrade to God tier to access God-tier Roblox accounts!"
-          ),
+          .setDescription("You need the **God** role to use this command.\n\nUpgrade to God tier to access God-tier Roblox accounts!"),
       ],
     });
     return;
   }
 
   const account = popGodAccount();
-
   if (!account) {
     await message.reply({
       embeds: [
@@ -754,54 +878,7 @@ async function handleGenerateGod(message: Message) {
     return;
   }
 
-  const profile = await getRobloxProfile(account.username);
-
-  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
-  const createdStr = profile?.createdAt
-    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-    : "N/A";
-  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
-    ? `${profile.ageDays.toLocaleString()} days`
-    : "N/A";
-  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
-
-  const dmEmbed = new EmbedBuilder()
-    .setTitle("🌟 Your God-Tier Roblox Account")
-    .setColor(0x9b59b6)
-    .addFields(
-      { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-      { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-      { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-      { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-      { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-      { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-    )
-    .setFooter({ text: "🌟 God-Tier Account — Login at roblox.com" })
-    .setTimestamp();
-
-  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
-  if (profileUrl) dmEmbed.setURL(profileUrl);
-
-  try {
-    await message.author.send({ embeds: [dmEmbed] });
-    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
-    generateCooldowns.set(message.author.id, Date.now());
-
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x9b59b6)
-          .setDescription(`🌟 Check your DMs, ${message.author}! Your God-tier account has been sent.\n⏳ You can generate again <t:${Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000)}:R>`)
-          .setTimestamp(),
-      ],
-    });
-  } catch {
-    pendingAccounts.set(message.author.id, { account, tier: "god" });
-    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
-  }
+  await sendCaptcha(message, account, "god");
 }
 
 async function handleGeneratePremium(message: Message) {
@@ -820,26 +897,20 @@ async function handleGeneratePremium(message: Message) {
     return;
   }
 
-  // Check for Premium role
-  const member = await message.guild.members.fetch(message.author.id).catch(() => null);
-  const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
-
-  if (!hasPremium) {
+  const member = await message.guild!.members.fetch(message.author.id).catch(() => null);
+  if (!(member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false)) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setTitle("⭐ Premium Required")
           .setColor(0xf5a623)
-          .setDescription(
-            "You need the **Premium** role to use this command.\n\nUpgrade to Premium to access premium Roblox accounts!"
-          ),
+          .setDescription("You need the **Premium** role to use this command.\n\nUpgrade to Premium to access premium Roblox accounts!"),
       ],
     });
     return;
   }
 
   const account = popPremiumAccount();
-
   if (!account) {
     await message.reply({
       embeds: [
@@ -852,54 +923,7 @@ async function handleGeneratePremium(message: Message) {
     return;
   }
 
-  const profile = await getRobloxProfile(account.username);
-
-  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
-  const createdStr = profile?.createdAt
-    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-    : "N/A";
-  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
-    ? `${profile.ageDays.toLocaleString()} days`
-    : "N/A";
-  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
-
-  const dmEmbed = new EmbedBuilder()
-    .setTitle("⭐ Your Premium Roblox Account")
-    .setColor(0xf5a623)
-    .addFields(
-      { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-      { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-      { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-      { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-      { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-      { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-      { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-      { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-    )
-    .setFooter({ text: "⭐ Premium Account — Login at roblox.com" })
-    .setTimestamp();
-
-  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
-  if (profileUrl) dmEmbed.setURL(profileUrl);
-
-  try {
-    await message.author.send({ embeds: [dmEmbed] });
-    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
-    generateCooldowns.set(message.author.id, Date.now());
-
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xf5a623)
-          .setDescription(`⭐ Check your DMs, ${message.author}! Your premium account has been sent.\n⏳ You can generate again <t:${Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000)}:R>`)
-          .setTimestamp(),
-      ],
-    });
-  } catch {
-    pendingAccounts.set(message.author.id, { account, tier: "premium" });
-    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
-  }
+  await sendCaptcha(message, account, "premium");
 }
 
 async function handleShowApiPanel(message: Message) {
