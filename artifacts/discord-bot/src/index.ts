@@ -117,6 +117,9 @@ interface Session {
 }
 const sessions = new Map<string, Session>();
 
+// Locked stock tiers — users cannot generate from locked tiers
+const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup">();
+
 // 9-minute cooldown for generate commands (per user)
 const GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 const generateCooldowns = new Map<string, number>();
@@ -225,6 +228,14 @@ client.on("messageCreate", async (message: Message) => {
     await handleAgeGroupStockCount(message);
   } else if (command === "allstocks") {
     await handleAllStock(message);
+  } else if (command === "lockstock") {
+    await handleLockStock(message, args[1], true);
+  } else if (command === "unlockstock") {
+    await handleLockStock(message, args[1], false);
+  } else if (command === "lockallstocks") {
+    await handleLockAllStocks(message, true);
+  } else if (command === "unlockallstocks") {
+    await handleLockAllStocks(message, false);
   } else if (command === "showapipanel") {
     await handleShowApiPanel(message);
   } else if (command === "addapikeys") {
@@ -719,6 +730,12 @@ function checkCooldown(userId: string): number | null {
 }
 
 async function handleGenerate(message: Message) {
+  if (lockedStocks.has("free")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Free stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
     const mins = Math.floor(remaining / 60000);
@@ -930,6 +947,68 @@ async function handleAllStock(message: Message) {
   });
 }
 
+async function handleLockStock(message: Message, tierArg: string, lock: boolean) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+    });
+    return;
+  }
+
+  const tierMap: Record<string, "free" | "premium" | "god" | "agegroup"> = {
+    free: "free", premium: "premium", god: "god", agegroup: "agegroup",
+  };
+  const tier = tierMap[tierArg?.toLowerCase()];
+
+  if (!tier) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ Invalid tier. Use: `free`, `premium`, `god`, or `agegroup`"),
+      ],
+    });
+    return;
+  }
+
+  if (lock) lockedStocks.add(tier); else lockedStocks.delete(tier);
+
+  const tierLabel = tier === "god" ? "🌟 God" : tier === "premium" ? "⭐ Premium" : tier === "agegroup" ? "🎂 Age Group" : "🟢 Free";
+  const action = lock ? "🔒 Locked" : "🔓 Unlocked";
+  const color  = lock ? 0xff4444 : 0x00c851;
+
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(color)
+        .setDescription(`${action} **${tierLabel}** stock — users can${lock ? " no longer" : ""} generate from this tier.`),
+    ],
+  });
+}
+
+async function handleLockAllStocks(message: Message, lock: boolean) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+    });
+    return;
+  }
+
+  const allTiers = ["free", "premium", "god", "agegroup"] as const;
+  if (lock) allTiers.forEach((t) => lockedStocks.add(t));
+  else lockedStocks.clear();
+
+  const action = lock ? "🔒 All stocks locked" : "🔓 All stocks unlocked";
+  const color  = lock ? 0xff4444 : 0x00c851;
+  const detail = lock
+    ? "Users can no longer generate from any tier."
+    : "Users can now generate from all tiers.";
+
+  await message.reply({
+    embeds: [new EmbedBuilder().setColor(color).setTitle(action).setDescription(detail)],
+  });
+}
+
 async function handleAgeGroupStockCount(message: Message) {
   const count = ageGroupStockCount();
   await message.reply({
@@ -974,6 +1053,12 @@ async function handleAddAgeGroupStock(message: Message) {
 }
 
 async function handleGenerateAgeGroup(message: Message) {
+  if (lockedStocks.has("agegroup")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Age Group stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
   const last = ageGroupCooldowns.get(message.author.id);
   if (last) {
     const remaining = AGE_GROUP_COOLDOWN_MS - (Date.now() - last);
@@ -1009,6 +1094,12 @@ async function handleGenerateAgeGroup(message: Message) {
 }
 
 async function handleGenerateGod(message: Message) {
+  if (lockedStocks.has("god")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("God stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
     const mins = Math.floor(remaining / 60000);
@@ -1054,6 +1145,12 @@ async function handleGenerateGod(message: Message) {
 }
 
 async function handleGeneratePremium(message: Message) {
+  if (lockedStocks.has("premium")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Premium stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
     const mins = Math.floor(remaining / 60000);
