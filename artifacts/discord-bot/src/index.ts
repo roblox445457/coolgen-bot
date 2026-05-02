@@ -722,6 +722,21 @@ async function handleAddApiKeys(message: Message, keys: string[]) {
 }
 
 async function handleGenerateAlt(message: Message) {
+  const remaining = checkCooldown(message.author.id);
+  if (remaining !== null) {
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.ceil((remaining % 60000) / 1000);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("⏳ Cooldown Active")
+          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
+      ],
+    });
+    return;
+  }
+
   const account = popAccount();
 
   if (!account) {
@@ -774,6 +789,7 @@ async function handleGenerateAlt(message: Message) {
         ...(profile?.avatarUrl ? { thumbnail: { url: profile.avatarUrl } } : {}),
       };
       await axios.post(webhookUrl, { embeds: [webhookEmbed] });
+      generateCooldowns.set(message.author.id, Date.now());
       await message.reply({
         embeds: [
           new EmbedBuilder()
@@ -820,6 +836,7 @@ async function handleGenerateAlt(message: Message) {
       if (profileUrl) dmEmbed.setURL(profileUrl);
 
       await message.author.send({ embeds: [dmEmbed] });
+      generateCooldowns.set(message.author.id, Date.now());
       await message.reply({
         embeds: [
           new EmbedBuilder()
