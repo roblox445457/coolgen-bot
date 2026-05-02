@@ -271,6 +271,15 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         ephemeral: true,
       });
       await interaction.message.delete().catch(() => null);
+      const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
+      await interaction.followUp({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff9900)
+            .setDescription(`⏳ ${interaction.user} can generate again <t:${cdEnd}:R>`),
+        ],
+        ephemeral: false,
+      });
       return;
 
     } else if (id === "dm_no") {
@@ -522,11 +531,12 @@ async function handleGenerate(message: Message) {
     await message.author.send({ embeds: [dmEmbed] });
     await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
     generateCooldowns.set(message.author.id, Date.now());
+    const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0x00c851)
-          .setDescription(`✅ Check your DMs, ${message.author}! Your account has been sent.`)
+          .setDescription(`✅ Check your DMs, ${message.author}! Your account has been sent.\n⏳ You can generate again <t:${cdEnd}:R>`)
           .setTimestamp(),
       ],
     });
@@ -761,7 +771,7 @@ async function handleGenerateGod(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0x9b59b6)
-          .setDescription(`🌟 Check your DMs, ${message.author}! Your God-tier account has been sent.`)
+          .setDescription(`🌟 Check your DMs, ${message.author}! Your God-tier account has been sent.\n⏳ You can generate again <t:${Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000)}:R>`)
           .setTimestamp(),
       ],
     });
@@ -859,7 +869,7 @@ async function handleGeneratePremium(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xf5a623)
-          .setDescription(`⭐ Check your DMs, ${message.author}! Your premium account has been sent.`)
+          .setDescription(`⭐ Check your DMs, ${message.author}! Your premium account has been sent.\n⏳ You can generate again <t:${Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000)}:R>`)
           .setTimestamp(),
       ],
     });
