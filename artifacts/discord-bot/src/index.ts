@@ -294,6 +294,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         ephemeral: true,
       });
       await interaction.message.delete().catch(() => null);
+      await postStockWebhook(account.username, pending.tier);
       const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
       await interaction.followUp({
         embeds: [
@@ -484,6 +485,47 @@ client.on("interactionCreate", async (interaction: Interaction) => {
   }
 });
 
+async function postStockWebhook(robloxUsername: string, tier: "free" | "premium" | "god" | "agegroup") {
+  const url = process.env.DISCORD_WEBHOOK_URL;
+  if (!url) return;
+
+  const tierLabel =
+    tier === "god" ? "🌟 God"
+    : tier === "premium" ? "⭐ Premium"
+    : tier === "agegroup" ? "🎂 Age Group"
+    : "🟢 Free";
+
+  const free     = stockCount();
+  const premium  = premiumStockCount();
+  const god      = godStockCount();
+  const ageGroup = ageGroupStockCount();
+
+  const stockBar = (n: number) => {
+    const filled = Math.min(n, 10);
+    return "█".repeat(filled) + "░".repeat(Math.max(0, 10 - filled)) + ` \`${n}\``;
+  };
+
+  await axios.post(url, {
+    embeds: [
+      {
+        title: "📤 Account Generated",
+        color: tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : tier === "agegroup" ? 0x00bcd4 : 0x00c851,
+        fields: [
+          { name: "👤 Roblox Username", value: `\`${robloxUsername}\``, inline: true },
+          { name: "📦 Tier",            value: tierLabel,               inline: true },
+          { name: "\u200b",             value: "\u200b",                inline: false },
+          { name: "🟢 Free",       value: stockBar(free),     inline: true },
+          { name: "⭐ Premium",    value: stockBar(premium),  inline: true },
+          { name: "🌟 God",        value: stockBar(god),      inline: true },
+          { name: "🎂 Age Group",  value: stockBar(ageGroup), inline: true },
+        ],
+        footer: { text: `Total remaining: ${free + premium + god + ageGroup} account(s)` },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  }).catch(() => null);
+}
+
 function dmOffEmbed() {
   return new EmbedBuilder()
     .setTitle("📵 DMs Are Off")
@@ -653,6 +695,7 @@ async function deliverAccount(
           .setTimestamp(),
       ],
     });
+    await postStockWebhook(account.username, tier);
   } catch {
     pendingAccounts.set(message.author.id, { account, tier });
     await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
