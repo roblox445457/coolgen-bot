@@ -737,6 +737,32 @@ async function handleGenerateAlt(message: Message) {
     return;
   }
 
+  const data = getApiData(message.author.id);
+
+  if (!data) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ No API Key")
+          .setDescription("You need an API key to use this command. Use `j!showapipanel` to redeem one."),
+      ],
+    });
+    return;
+  }
+
+  if (!data.webhook) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ No Webhook Set")
+          .setDescription("You have a key but no webhook configured. Use `j!showapipanel` → **Set Webhook**."),
+      ],
+    });
+    return;
+  }
+
   const account = popAccount();
 
   if (!account) {
@@ -751,113 +777,62 @@ async function handleGenerateAlt(message: Message) {
     return;
   }
 
-  const profile = await getRobloxProfile(account.username);
+  try {
+    const profile = await getRobloxProfile(account.username);
 
-  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
-  const createdStr = profile?.createdAt
-    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-    : "N/A";
-  const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
-    ? `${profile.ageDays.toLocaleString()} days`
-    : "N/A";
-  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+    const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+    const createdStr = profile?.createdAt
+      ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      : "N/A";
+    const ageDaysStr = profile?.ageDays !== null && profile?.ageDays !== undefined
+      ? `${profile.ageDays.toLocaleString()} days`
+      : "N/A";
+    const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
 
-  const data = getApiData(message.author.id);
-  const webhookUrl = data?.webhook ?? null;
+    const webhookEmbed: Record<string, unknown> = {
+      title: "🎮 Roblox Account (via API)",
+      color: 0xe8192c,
+      fields: [
+        { name: "👤 Username", value: `\`${account.username}\``, inline: true },
+        { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+        { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
+        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+        { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
+        { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
+        { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
+        { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
+        { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
+        { name: "🍪 Security Cookie (.ROBLOSECURITY)", value: `\`\`\`${account.cookie}\`\`\`` },
+      ],
+      footer: { text: `Requested by ${message.author.tag} via j!generatealt` },
+      timestamp: new Date().toISOString(),
+      ...(profileUrl ? { url: profileUrl } : {}),
+      ...(profile?.avatarUrl ? { thumbnail: { url: profile.avatarUrl } } : {}),
+    };
 
-  if (webhookUrl) {
-    // Deliver via webhook
-    try {
-      const webhookEmbed: Record<string, unknown> = {
-        title: "🎮 Roblox Account (via API)",
-        color: 0xe8192c,
-        fields: [
-          { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-          { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-          { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-          { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-          { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-          { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-          { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-          { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-          { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-          { name: "🍪 Security Cookie (.ROBLOSECURITY)", value: `\`\`\`${account.cookie}\`\`\`` },
-        ],
-        footer: { text: `Requested by ${message.author.tag} via j!generatealt` },
-        timestamp: new Date().toISOString(),
-        ...(profileUrl ? { url: profileUrl } : {}),
-        ...(profile?.avatarUrl ? { thumbnail: { url: profile.avatarUrl } } : {}),
-      };
-      await axios.post(webhookUrl, { embeds: [webhookEmbed] });
-      generateCooldowns.set(message.author.id, Date.now());
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x00c851)
-            .setDescription(`✅ Account delivered to your webhook channel, ${message.author}!`)
-            .setTimestamp(),
-        ],
-      });
-    } catch {
-      addAccount(account);
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("❌ Webhook Delivery Failed")
-            .setColor(0xff4444)
-            .setDescription(
-              "Couldn't send to your webhook. Make sure the URL is still valid.\n\n**Account was not wasted** — try again."
-            ),
-        ],
-      });
-    }
-  } else {
-    // No webhook — fall back to DM
-    try {
-      const dmEmbed = new EmbedBuilder()
-        .setTitle("🎮 Your Roblox Account")
-        .setColor(0xe8192c)
-        .addFields(
-          { name: "👤 Username", value: `\`${account.username}\``, inline: true },
-          { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
-          { name: "🆔 User ID", value: `\`${profile?.userId ?? "N/A"}\``, inline: true },
-          { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
-          { name: "📅 Created", value: `\`${createdStr}\``, inline: true },
-          { name: "⏳ Account Age", value: `\`${ageDaysStr}\``, inline: true },
-          { name: "👫 Friends", value: `\`${fmt(profile?.friends ?? null)}\``, inline: true },
-          { name: "👥 Followers", value: `\`${fmt(profile?.followers ?? null)}\``, inline: true },
-          { name: "➡️ Following", value: `\`${fmt(profile?.following ?? null)}\``, inline: true },
-          { name: "🍪 Security Cookie (.ROBLOSECURITY)", value: `\`\`\`${account.cookie}\`\`\`` },
-        )
-        .setFooter({ text: "Login at roblox.com — keep these credentials safe!" })
-        .setTimestamp();
+    await axios.post(data.webhook, { embeds: [webhookEmbed] });
+    generateCooldowns.set(message.author.id, Date.now());
 
-      if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
-      if (profileUrl) dmEmbed.setURL(profileUrl);
-
-      await message.author.send({ embeds: [dmEmbed] });
-      generateCooldowns.set(message.author.id, Date.now());
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x00c851)
-            .setDescription(`✅ Check your DMs, ${message.author}! Your account has been sent.`)
-            .setTimestamp(),
-        ],
-      });
-    } catch {
-      addAccount(account);
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("❌ Could Not DM You")
-            .setColor(0xff4444)
-            .setDescription(
-              "I couldn't send you a DM. Enable DMs from server members and try again.\n\n**Account was not wasted** — try again."
-            ),
-        ],
-      });
-    }
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setDescription(`✅ Account delivered to your webhook channel, ${message.author}!`)
+          .setTimestamp(),
+      ],
+    });
+  } catch {
+    addAccount(account);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Webhook Delivery Failed")
+          .setColor(0xff4444)
+          .setDescription(
+            "Couldn't send to your webhook. Make sure the URL is still valid.\n\n**Account was not wasted** — try again."
+          ),
+      ],
+    });
   }
 }
 
