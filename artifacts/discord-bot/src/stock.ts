@@ -6,6 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const STOCK_FILE = join(__dirname, "../stock.json");
 const PREMIUM_STOCK_FILE = join(__dirname, "../premium-stock.json");
 const GOD_STOCK_FILE = join(__dirname, "../god-stock.json");
+const AGE_GROUP_STOCK_FILE = join(__dirname, "../age-group-stock.json");
 
 export interface Account {
   username: string;
@@ -84,4 +85,24 @@ export function popPremiumAccount(): Account | null {
 
 export function premiumStockCount(): number {
   return loadFile(PREMIUM_STOCK_FILE).length;
+}
+
+// ── Age Group stock ───────────────────────────────────────────────────────────
+
+export function addAgeGroupAccount(account: Account): void {
+  const accounts = loadFile(AGE_GROUP_STOCK_FILE);
+  accounts.push(account);
+  saveFile(AGE_GROUP_STOCK_FILE, accounts);
+}
+
+export function popAgeGroupAccount(): Account | null {
+  const accounts = loadFile(AGE_GROUP_STOCK_FILE);
+  if (accounts.length === 0) return null;
+  const account = accounts.shift()!;
+  saveFile(AGE_GROUP_STOCK_FILE, accounts);
+  return account;
+}
+
+export function ageGroupStockCount(): number {
+  return loadFile(AGE_GROUP_STOCK_FILE).length;
 }

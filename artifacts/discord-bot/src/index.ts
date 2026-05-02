@@ -18,6 +18,7 @@ import {
   addAccount, popAccount, stockCount,
   addGodAccount, popGodAccount, godStockCount,
   addPremiumAccount, popPremiumAccount, premiumStockCount,
+  addAgeGroupAccount, popAgeGroupAccount, ageGroupStockCount,
 } from "./stock.js";
 import {
   addApiKeys, apiKeyPoolCount,
@@ -110,7 +111,7 @@ const client = new Client({
 // Track active addstock sessions: userId -> step + collected data
 interface Session {
   step: "username" | "password" | "cookie";
-  tier: "free" | "premium" | "god";
+  tier: "free" | "premium" | "god" | "agegroup";
   username?: string;
   password?: string;
 }
@@ -120,17 +121,21 @@ const sessions = new Map<string, Session>();
 const GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 const generateCooldowns = new Map<string, number>();
 
+// 12-minute cooldown for age group generate (per user)
+const AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
+const ageGroupCooldowns = new Map<string, number>();
+
 // Pending accounts for users whose DMs are off
 interface PendingAccount {
   account: Account;
-  tier: "free" | "premium" | "god";
+  tier: "free" | "premium" | "god" | "agegroup";
 }
 const pendingAccounts = new Map<string, PendingAccount>();
 
 // Pending captcha verifications
 interface PendingCaptcha {
   account: Account;
-  tier: "free" | "premium" | "god";
+  tier: "free" | "premium" | "god" | "agegroup";
   correctColor: string;
   originalMessage: Message;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -200,18 +205,24 @@ client.on("messageCreate", async (message: Message) => {
     await handleGenerateGod(message);
   } else if (command === "generatealt") {
     await handleGenerateAlt(message);
+  } else if (command === "generateagegroupalt") {
+    await handleGenerateAgeGroup(message);
   } else if (command === "addstock") {
     await handleAddStock(message, "free");
   } else if (command === "addpremiumstock") {
     await handleAddStock(message, "premium");
   } else if (command === "addgodstock") {
     await handleAddStock(message, "god");
+  } else if (command === "addagegroupaccounts") {
+    await handleAddAgeGroupStock(message);
   } else if (command === "stock") {
     await handleStockCount(message);
   } else if (command === "premiumstock") {
     await handlePremiumStockCount(message);
   } else if (command === "godstock") {
     await handleGodStockCount(message);
+  } else if (command === "agegroupstock") {
+    await handleAgeGroupStockCount(message);
   } else if (command === "allstocks") {
     await handleAllStock(message);
   } else if (command === "showapipanel") {
@@ -320,6 +331,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       } else {
         if (pending.tier === "god") addGodAccount(pending.account);
         else if (pending.tier === "premium") addPremiumAccount(pending.account);
+        else if (pending.tier === "agegroup") addAgeGroupAccount(pending.account);
         else addAccount(pending.account);
         await interaction.reply({
           embeds: [
@@ -499,6 +511,7 @@ function dmOffRow() {
 function returnPendingToStock(pending: PendingAccount) {
   if (pending.tier === "god") addGodAccount(pending.account);
   else if (pending.tier === "premium") addPremiumAccount(pending.account);
+  else if (pending.tier === "agegroup") addAgeGroupAccount(pending.account);
   else addAccount(pending.account);
 }
 
@@ -544,6 +557,7 @@ async function sendCaptcha(
       pendingCaptchas.delete(message.author.id);
       if (tier === "god") addGodAccount(account);
       else if (tier === "premium") addPremiumAccount(account);
+      else if (tier === "agegroup") addAgeGroupAccount(account);
       else addAccount(account);
       await captchaMsg
         .edit({
@@ -573,7 +587,7 @@ async function sendCaptcha(
 
 async function deliverAccount(
   account: Account,
-  tier: "free" | "premium" | "god",
+  tier: "free" | "premium" | "god" | "agegroup",
   message: Message
 ) {
   const profile = await getRobloxProfile(account.username);
@@ -587,13 +601,19 @@ async function deliverAccount(
   const tierLabel =
     tier === "god" ? "🌟 Your God-Tier Roblox Account"
     : tier === "premium" ? "⭐ Your Premium Roblox Account"
+    : tier === "agegroup" ? "🎂 Your Age Group Roblox Account"
     : "🎮 Your Roblox Account";
-  const color = tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : 0x00c851;
+  const color =
+    tier === "god" ? 0x9b59b6
+    : tier === "premium" ? 0xf5a623
+    : tier === "agegroup" ? 0x00bcd4
+    : 0x00c851;
   const footer =
     tier === "god" ? "🌟 God-Tier Account — Login at roblox.com"
     : tier === "premium" ? "⭐ Premium Account — Login at roblox.com"
+    : tier === "agegroup" ? "🎂 Age Group Account — Login at roblox.com"
     : "Login at roblox.com — keep these credentials safe!";
-  const successEmoji = tier === "god" ? "🌟" : tier === "premium" ? "⭐" : "✅";
+  const successEmoji = tier === "god" ? "🌟" : tier === "premium" ? "⭐" : tier === "agegroup" ? "🎂" : "✅";
 
   const dmEmbed = new EmbedBuilder()
     .setTitle(tierLabel)
@@ -615,8 +635,10 @@ async function deliverAccount(
   if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
   if (profileUrl) dmEmbed.setURL(profileUrl);
 
-  generateCooldowns.set(message.author.id, Date.now());
-  const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
+  const cooldownMs = tier === "agegroup" ? AGE_GROUP_COOLDOWN_MS : GENERATE_COOLDOWN_MS;
+  if (tier === "agegroup") ageGroupCooldowns.set(message.author.id, Date.now());
+  else generateCooldowns.set(message.author.id, Date.now());
+  const cdEnd = Math.floor((Date.now() + cooldownMs) / 1000);
 
   try {
     await message.author.send({ embeds: [dmEmbed] });
@@ -757,14 +779,32 @@ async function handleSessionReply(message: Message) {
       addGodAccount(account);
     } else if (tier === "premium") {
       addPremiumAccount(account);
+    } else if (tier === "agegroup") {
+      addAgeGroupAccount(account);
     } else {
       addAccount(account);
     }
 
-    const count = tier === "god" ? godStockCount() : tier === "premium" ? premiumStockCount() : stockCount();
-    const label = tier === "god" ? "✅ Account Added to God Stock" : tier === "premium" ? "✅ Account Added to Premium Stock" : "✅ Account Added to Stock";
-    const color = tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : 0x00c851;
-    const stockLabel = tier === "god" ? "🌟 God Stock" : tier === "premium" ? "⭐ Premium Stock" : "📦 Total Stock";
+    const count =
+      tier === "god" ? godStockCount()
+      : tier === "premium" ? premiumStockCount()
+      : tier === "agegroup" ? ageGroupStockCount()
+      : stockCount();
+    const label =
+      tier === "god" ? "✅ Account Added to God Stock"
+      : tier === "premium" ? "✅ Account Added to Premium Stock"
+      : tier === "agegroup" ? "✅ Account Added to Age Group Stock"
+      : "✅ Account Added to Stock";
+    const color =
+      tier === "god" ? 0x9b59b6
+      : tier === "premium" ? 0xf5a623
+      : tier === "agegroup" ? 0x00bcd4
+      : 0x00c851;
+    const stockLabel =
+      tier === "god" ? "🌟 God Stock"
+      : tier === "premium" ? "⭐ Premium Stock"
+      : tier === "agegroup" ? "🔵 Age Group Stock"
+      : "📦 Total Stock";
 
     await message.reply({
       embeds: [
@@ -819,21 +859,101 @@ async function handleAllStock(message: Message) {
   const free = stockCount();
   const premium = premiumStockCount();
   const god = godStockCount();
-  const total = free + premium + god;
+  const ageGroup = ageGroupStockCount();
+  const total = free + premium + god + ageGroup;
   await message.reply({
     embeds: [
       new EmbedBuilder()
         .setColor(0x5865f2)
         .setTitle("📦 All Stock")
         .addFields(
-          { name: "🟢 Free", value: `\`${free}\` account(s)`, inline: true },
-          { name: "🟡 Premium", value: `\`${premium}\` account(s)`, inline: true },
-          { name: "🟣 God", value: `\`${god}\` account(s)`, inline: true },
+          { name: "🟢 Free",       value: `\`${free}\` account(s)`,     inline: true },
+          { name: "🟡 Premium",    value: `\`${premium}\` account(s)`,  inline: true },
+          { name: "🟣 God",        value: `\`${god}\` account(s)`,      inline: true },
+          { name: "🔵 Age Group",  value: `\`${ageGroup}\` account(s)`, inline: true },
         )
         .setFooter({ text: `Total: ${total} account(s)` })
         .setTimestamp(),
     ],
   });
+}
+
+async function handleAgeGroupStockCount(message: Message) {
+  const count = ageGroupStockCount();
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00bcd4)
+        .setDescription(`🔵 **Age Group Stock:** \`${count}\` account(s) available`),
+    ],
+  });
+}
+
+async function handleAddAgeGroupStock(message: Message) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ You don't have permission to use this command."),
+      ],
+    });
+    return;
+  }
+  if (message.channel.id !== STOCK_CHANNEL_ID) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription("❌ This command can only be used in the designated stock channel."),
+      ],
+    });
+    return;
+  }
+  sessions.set(message.author.id, { step: "username", tier: "agegroup" });
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00bcd4)
+        .setTitle("🎂 Add Age Group Stock")
+        .setDescription("**Roblox Username?**\n\nType the username of the account below."),
+    ],
+  });
+}
+
+async function handleGenerateAgeGroup(message: Message) {
+  const last = ageGroupCooldowns.get(message.author.id);
+  if (last) {
+    const remaining = AGE_GROUP_COOLDOWN_MS - (Date.now() - last);
+    if (remaining > 0) {
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.ceil((remaining % 60000) / 1000);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("⏳ Cooldown Active")
+            .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
+        ],
+      });
+      return;
+    }
+  }
+
+  const account = popAgeGroupAccount();
+  if (!account) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Age Group Stock Empty")
+          .setColor(0xff4444)
+          .setDescription("There are no Age Group accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  await sendCaptcha(message, account, "agegroup");
 }
 
 async function handleGenerateGod(message: Message) {
