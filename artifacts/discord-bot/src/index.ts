@@ -95,7 +95,7 @@ async function getRobloxProfile(username: string): Promise<RobloxProfile | null>
 }
 
 const PREFIX = "j!";
-const STOCK_CHANNEL_ID = "1495195376590786720";
+const STOCK_CHANNEL_ID = "1495106187316822128";
 const STOCK_ALLOWED_USER_ID = "1230660770749087796";
 const PREMIUM_ROLE_ID = "1495200351710613566";
 const GOD_ROLE_ID = "1499806905697042492";
