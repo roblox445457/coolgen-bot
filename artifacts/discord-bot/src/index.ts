@@ -747,7 +747,7 @@ function checkCooldown(userId: string): number | null {
 }
 
 async function handleGenerate(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -807,7 +807,7 @@ async function handleAddStock(message: Message, tier: "free" | "premium" | "god"
     return;
   }
 
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -1066,7 +1066,7 @@ async function handleAddAgeGroupStock(message: Message) {
     });
     return;
   }
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -1088,7 +1088,7 @@ async function handleAddAgeGroupStock(message: Message) {
 }
 
 async function handleGenerateAgeGroup(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
