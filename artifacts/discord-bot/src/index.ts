@@ -752,7 +752,7 @@ async function handleGenerate(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128"),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
@@ -812,7 +812,7 @@ async function handleAddStock(message: Message, tier: "free" | "premium" | "god"
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128"),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
@@ -1071,7 +1071,7 @@ async function handleAddAgeGroupStock(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
@@ -1093,7 +1093,7 @@ async function handleGenerateAgeGroup(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
@@ -1174,12 +1174,12 @@ async function handleAddRareStock(message: Message) {
 }
 
 async function handleGenerateRare(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128"),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
@@ -1242,12 +1242,12 @@ async function handleGenerateRare(message: Message) {
 }
 
 async function handleGenerateGod(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
