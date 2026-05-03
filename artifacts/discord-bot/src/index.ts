@@ -96,6 +96,7 @@ async function getRobloxProfile(username: string): Promise<RobloxProfile | null>
 
 const PREFIX = "j!";
 const STOCK_CHANNEL_ID = "1495106187316822128";
+const ADD_STOCK_CHANNEL_ID = "1495195376590786720";
 const STOCK_ALLOWED_USER_ID = "1230660770749087796";
 const PREMIUM_ROLE_ID = "1495200351710613566";
 const GOD_ROLE_ID = "1499806905697042492";
@@ -746,12 +747,12 @@ function checkCooldown(userId: string): number | null {
 }
 
 async function handleGenerate(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128"),
       ],
     });
     return;
@@ -806,12 +807,12 @@ async function handleAddStock(message: Message, tier: "free" | "premium" | "god"
     return;
   }
 
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128"),
       ],
     });
     return;
@@ -1155,9 +1156,9 @@ async function handleAddRareStock(message: Message) {
     });
     return;
   }
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Command only works in the designated stock channel.")],
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128")],
     });
     return;
   }
@@ -1173,12 +1174,12 @@ async function handleAddRareStock(message: Message) {
 }
 
 async function handleGenerateRare(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
+          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128"),
       ],
     });
     return;
