@@ -187,11 +187,8 @@ client.on("messageCreate", async (message: Message) => {
   // Ignore all DMs — bot only responds in servers
   if (!message.guild) return;
 
-  // Handle active addstock session replies (only in the stock channel)
-  if (
-    sessions.has(message.author.id) &&
-    message.channel.id === STOCK_CHANNEL_ID
-  ) {
+  // Handle active addstock session replies
+  if (sessions.has(message.author.id)) {
     await handleSessionReply(message);
     return;
   }
