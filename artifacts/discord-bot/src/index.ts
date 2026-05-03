@@ -751,7 +751,7 @@ async function handleGenerate(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
@@ -811,7 +811,7 @@ async function handleAddStock(message: Message, tier: "free" | "premium" | "god"
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
@@ -1070,7 +1070,7 @@ async function handleAddAgeGroupStock(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
@@ -1092,7 +1092,7 @@ async function handleGenerateAgeGroup(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
@@ -1157,7 +1157,7 @@ async function handleAddRareStock(message: Message) {
   }
   if (message.channel.id !== STOCK_CHANNEL_ID) {
     await message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ This command can only be used in the designated stock channel.")],
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Command only works in the designated stock channel.")],
     });
     return;
   }
@@ -1178,7 +1178,7 @@ async function handleGenerateRare(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
@@ -1246,7 +1246,7 @@ async function handleGenerateGod(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
@@ -1307,7 +1307,7 @@ async function handleGeneratePremium(message: Message) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ This command can only be used in the designated stock channel."),
+          .setDescription("❌ Command only works in the designated stock channel."),
       ],
     });
     return;
