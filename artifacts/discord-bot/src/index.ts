@@ -1066,7 +1066,7 @@ async function handleAddAgeGroupStock(message: Message) {
     });
     return;
   }
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -1088,7 +1088,7 @@ async function handleAddAgeGroupStock(message: Message) {
 }
 
 async function handleGenerateAgeGroup(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -1242,7 +1242,7 @@ async function handleGenerateRare(message: Message) {
 }
 
 async function handleGenerateGod(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
