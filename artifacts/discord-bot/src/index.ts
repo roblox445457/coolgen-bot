@@ -1156,9 +1156,9 @@ async function handleAddRareStock(message: Message) {
     });
     return;
   }
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
+  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
     await message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495106187316822128")],
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720")],
     });
     return;
   }
