@@ -747,16 +747,6 @@ function checkCooldown(userId: string): number | null {
 }
 
 async function handleGenerate(message: Message) {
-  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
-      ],
-    });
-    return;
-  }
   if (lockedStocks.has("free")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Free stock is currently locked. Please check back later.")],
@@ -802,17 +792,6 @@ async function handleAddStock(message: Message, tier: "free" | "premium" | "god"
         new EmbedBuilder()
           .setColor(0xff4444)
           .setDescription("❌ You don't have permission to use this command."),
-      ],
-    });
-    return;
-  }
-
-  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
       ],
     });
     return;
@@ -1066,16 +1045,6 @@ async function handleAddAgeGroupStock(message: Message) {
     });
     return;
   }
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
-      ],
-    });
-    return;
-  }
   sessions.set(message.author.id, { step: "username", tier: "agegroup" });
   await message.reply({
     embeds: [
@@ -1088,16 +1057,6 @@ async function handleAddAgeGroupStock(message: Message) {
 }
 
 async function handleGenerateAgeGroup(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
-      ],
-    });
-    return;
-  }
   if (lockedStocks.has("agegroup")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Age Group stock is currently locked. Please check back later.")],
@@ -1156,12 +1115,6 @@ async function handleAddRareStock(message: Message) {
     });
     return;
   }
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720")],
-    });
-    return;
-  }
   sessions.set(message.author.id, { step: "username", tier: "rare" });
   await message.reply({
     embeds: [
@@ -1174,16 +1127,6 @@ async function handleAddRareStock(message: Message) {
 }
 
 async function handleGenerateRare(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
-      ],
-    });
-    return;
-  }
   if (lockedStocks.has("rare")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Rare Usernames stock is currently locked. Please check back later.")],
@@ -1242,16 +1185,6 @@ async function handleGenerateRare(message: Message) {
 }
 
 async function handleGenerateGod(message: Message) {
-  if (message.channel.id !== ADD_STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Wrong Channel ! go here then the channel https://discord.com/channels/1495106185903476768/1495195376590786720"),
-      ],
-    });
-    return;
-  }
   if (lockedStocks.has("god")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("God stock is currently locked. Please check back later.")],
@@ -1303,16 +1236,6 @@ async function handleGenerateGod(message: Message) {
 }
 
 async function handleGeneratePremium(message: Message) {
-  if (message.channel.id !== STOCK_CHANNEL_ID) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription("❌ Command only works in the designated stock channel."),
-      ],
-    });
-    return;
-  }
   if (lockedStocks.has("premium")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Premium stock is currently locked. Please check back later.")],
