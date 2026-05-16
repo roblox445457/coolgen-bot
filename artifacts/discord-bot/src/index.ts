@@ -1781,7 +1781,7 @@ async function handleAddMultiStock(message: Message, args: string[]) {
   }
 
   let added = 0;
-  const noSecurityEntries: string[] = [];
+  let noCookie = 0;
   const invalidEntries: string[] = [];
 
   for (const entry of entries) {
@@ -1797,19 +1797,16 @@ async function handleAddMultiStock(message: Message, args: string[]) {
     // Cookie is everything from the 3rd colon onward (cookies contain colons)
     const cookie = parts.slice(2).join(":");
 
-    if (!cookie) {
-      noSecurityEntries.push(username);
-      continue;
-    }
-
+    if (!cookie) noCookie++;
     addAccount({ username, password, cookie });
     added++;
   }
 
   const totalStock = stockCount();
   const lines: string[] = [];
-  if (added > 0)              lines.push(`✅ **${added}** account(s) added to free stock.`);
-  if (invalidEntries.length)  lines.push(`⚠️ **${invalidEntries.length}** invalid entry(ies) skipped (bad format).`);
+  if (added > 0)             lines.push(`✅ **${added}** account(s) added to free stock.`);
+  if (noCookie > 0)          lines.push(`⚠️ **${noCookie}** account(s) added without a .ROBLOSECURITY cookie.`);
+  if (invalidEntries.length) lines.push(`❌ **${invalidEntries.length}** entry(ies) skipped (bad format — need at least \`username:password\`).`);
 
   const embed = new EmbedBuilder()
     .setColor(added > 0 ? 0x00c851 : 0xff9900)
@@ -1818,11 +1815,10 @@ async function handleAddMultiStock(message: Message, args: string[]) {
     .addFields({ name: "📦 Free Stock Total", value: `\`${totalStock} account(s)\``, inline: true })
     .setTimestamp();
 
-  if (noSecurityEntries.length > 0) {
-    const list = noSecurityEntries.slice(0, 20).join(", ") + (noSecurityEntries.length > 20 ? ` …and ${noSecurityEntries.length - 20} more` : "");
+  if (noCookie > 0) {
     embed.addFields({
-      name: `⛔ NO .ROBLOXSECURITY FOR THIS STOCK (${noSecurityEntries.length})`,
-      value: list,
+      name: "⛔ NO .ROBLOXSECURITY FOR THIS STOCK",
+      value: `${noCookie} account(s) were added without a .ROBLOSECURITY cookie. When users generate these, the cookie field will be empty.`,
     });
   }
 
