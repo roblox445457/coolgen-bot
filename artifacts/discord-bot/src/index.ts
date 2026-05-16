@@ -207,6 +207,12 @@ client.on("presenceUpdate", async (_old, newPresence) => {
   if (HOME_GUILD_ID && newPresence.guild.id !== HOME_GUILD_ID) return;
 
   const member = newPresence.member;
+  const presenceStatus = newPresence.status; // "online" | "idle" | "dnd" | "offline" | "invisible"
+
+  // If the user went offline or invisible, don't touch the role —
+  // Discord clears activity data on disconnect so it would false-trigger removal.
+  if (presenceStatus === "offline" || presenceStatus === "invisible") return;
+
   const customStatus = newPresence.activities.find(a => a.type === 4)?.state ?? "";
   const hasStatus = customStatus.includes(REQUIRED_STATUS);
   const hasRole = member.roles.cache.has(STATUS_ROLE_ID);
