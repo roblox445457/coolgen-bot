@@ -103,6 +103,8 @@ const ADD_STOCK_CHANNEL_ID = "1495195376590786720";
 const STOCK_ALLOWED_USER_ID = "1230660770749087796";
 const PREMIUM_ROLE_ID = "1495200351710613566";
 const GOD_ROLE_ID = "1499806905697042492";
+const STATUS_ROLE_ID = "1505227536379019444";
+const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/KzGC6wksRk";
 
 const client = new Client({
   intents: [
@@ -192,6 +194,26 @@ client.on("guildCreate", async (guild) => {
   if (!HOME_GUILD_ID || guild.id !== HOME_GUILD_ID) {
     console.log(`Invited to non-home guild: ${guild.name} (${guild.id}) — leaving.`);
     await guild.leave().catch(() => null);
+  }
+});
+
+client.on("presenceUpdate", async (_old, newPresence) => {
+  if (!newPresence.guild || !newPresence.member) return;
+  if (HOME_GUILD_ID && newPresence.guild.id !== HOME_GUILD_ID) return;
+
+  const member = newPresence.member;
+  const customStatus = newPresence.activities.find(a => a.type === 4)?.state ?? "";
+  const hasStatus = customStatus.includes(REQUIRED_STATUS);
+  const hasRole = member.roles.cache.has(STATUS_ROLE_ID);
+
+  try {
+    if (hasStatus && !hasRole) {
+      await member.roles.add(STATUS_ROLE_ID);
+    } else if (!hasStatus && hasRole) {
+      await member.roles.remove(STATUS_ROLE_ID);
+    }
+  } catch {
+    // Missing permissions or role not found — fail silently
   }
 });
 
@@ -1806,8 +1828,6 @@ async function handleBulkGen(message: Message) {
   const limit    = hasGod ? 10 : hasPremium ? 6 : 4;
   const tierLabel = hasGod ? "🌟 God" : hasPremium ? "⭐ Premium" : "🟢 Free";
   const color     = hasGod ? 0x9b59b6 : hasPremium ? 0xf5a623 : 0x00c851;
-
-  const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/KzGC6wksRk";
 
   // Free-tier users must have the required status and be online
   if (!hasGod && !hasPremium) {
