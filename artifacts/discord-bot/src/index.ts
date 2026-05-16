@@ -140,6 +140,15 @@ interface PendingAccount {
 }
 const pendingAccounts = new Map<string, PendingAccount>();
 
+// Pending bulk accounts for users whose DMs are off
+interface PendingBulkAccounts {
+  accounts: Account[];
+  color: number;
+  tierBadge: string;
+  cdEnd: number;
+}
+const pendingBulkAccounts = new Map<string, PendingBulkAccounts>();
+
 // Pending captcha verifications
 interface PendingCaptcha {
   account: Account;
@@ -341,6 +350,79 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         returnPendingToStock(pending);
       }
       await interaction.reply({ content: "❌ Cancelled.", ephemeral: true });
+      await interaction.message.delete().catch(() => null);
+      return;
+
+    } else if (id === "bulk_dm_yes") {
+      const pending = pendingBulkAccounts.get(userId);
+      if (!pending) {
+        await interaction.reply({ content: "❌ No pending bulk accounts found — they may have expired.", ephemeral: true });
+        return;
+      }
+      pendingBulkAccounts.delete(userId);
+      await interaction.deferReply({ ephemeral: true });
+      await interaction.message.delete().catch(() => null);
+
+      for (let i = 0; i < pending.accounts.length; i++) {
+        const account = pending.accounts[i];
+        const profile = await getRobloxProfile(account.username);
+        const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+        const createdStr = profile?.createdAt
+          ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+          : "N/A";
+        const ageDaysStr = profile?.ageDays != null ? `${profile.ageDays.toLocaleString()} days` : "N/A";
+        const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🎮 Bulk Account ${i + 1} of ${pending.accounts.length}`)
+          .setColor(pending.color)
+          .addFields(
+            { name: "👤 Username",     value: `\`${account.username}\``,                         inline: true },
+            { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+            { name: "🆔 User ID",      value: `\`${profile?.userId ?? "N/A"}\``,                 inline: true },
+            { name: "🔑 Password",     value: `\`${account.password}\``,                         inline: true },
+            { name: "📅 Created",      value: `\`${createdStr}\``,                               inline: true },
+            { name: "⏳ Account Age",  value: `\`${ageDaysStr}\``,                               inline: true },
+            { name: "👫 Friends",      value: `\`${fmt(profile?.friends ?? null)}\``,            inline: true },
+            { name: "👥 Followers",    value: `\`${fmt(profile?.followers ?? null)}\``,          inline: true },
+            { name: "➡️ Following",    value: `\`${fmt(profile?.following ?? null)}\``,          inline: true },
+          )
+          .setFooter({ text: `${pending.tierBadge} · Only you can see this` })
+          .setTimestamp();
+
+        if (profile?.avatarUrl) embed.setThumbnail(profile.avatarUrl);
+        if (profileUrl) embed.setURL(profileUrl);
+
+        const cookieLine = account.cookie
+          ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
+          : `⛔ **NO .ROBLOXSECURITY FOR THIS STOCK**`;
+        const content = `${cookieLine}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`;
+
+        if (i === 0) {
+          await interaction.editReply({ embeds: [embed], content });
+        } else {
+          await interaction.followUp({ embeds: [embed], content, ephemeral: true });
+        }
+      }
+
+      await interaction.followUp({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff9900)
+            .setDescription(`⏳ ${interaction.user} can bulk gen again <t:${pending.cdEnd}:R>`),
+        ],
+        ephemeral: false,
+      });
+      return;
+
+    } else if (id === "bulk_dm_no") {
+      const pending = pendingBulkAccounts.get(userId);
+      if (pending) {
+        pendingBulkAccounts.delete(userId);
+        for (const acc of pending.accounts) addAccount(acc);
+        bulkGenCooldowns.delete(userId);
+      }
+      await interaction.reply({ content: "❌ Cancelled. Accounts returned to stock.", ephemeral: true });
       await interaction.message.delete().catch(() => null);
       return;
 
@@ -593,6 +675,30 @@ function dmOffRow() {
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId("dm_no")
+      .setLabel("❌ No, cancel")
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+function bulkDmOffEmbed(count: number) {
+  return new EmbedBuilder()
+    .setTitle("📵 DMs Are Off")
+    .setColor(0xff9900)
+    .setDescription(
+      `Your DMs are disabled so I can't send the **${count}** account(s) privately.\n\n` +
+      "Would you like to receive them here instead? **Only you will see them.**"
+    )
+    .setTimestamp();
+}
+
+function bulkDmOffRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("bulk_dm_yes")
+      .setLabel("✅ Yes, show them here")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("bulk_dm_no")
       .setLabel("❌ No, cancel")
       .setStyle(ButtonStyle.Danger),
   );
@@ -1741,10 +1847,9 @@ async function handleBulkGen(message: Message) {
 
     await message.reply({ embeds: [channelEmbed] });
   } catch {
-    // DMs closed — return all accounts to stock
-    for (const acc of accounts) addAccount(acc);
-    bulkGenCooldowns.delete(message.author.id);
-    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
+    // DMs closed — hold accounts and offer to show here
+    pendingBulkAccounts.set(message.author.id, { accounts, color, tierBadge, cdEnd });
+    await message.reply({ embeds: [bulkDmOffEmbed(accounts.length)], components: [bulkDmOffRow()] });
   }
 }
 
