@@ -1964,6 +1964,7 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!generateagegroupalt`",   value: "🎂 Get an Age Group account. *(12m cooldown)*" },
           { name: "`j!generaterare`",          value: "💎 Get a Rare Username account. *(5-day server membership required)*" },
           { name: "`j!generatealt`",           value: "🔑 Deliver an account to your webhook (requires API key)." },
+          { name: "`j!bulkgen`",               value: "📦 Bulk generate — Free: 4 · Premium: 6 · God: 10 accounts. *(15m cooldown)*" },
         )
         .addFields({ name: "📝 Note", value: "Make sure your DMs are open so the bot can reach you!" })
         .setFooter({ text: "CoolGEN · Prefix: j!" })
@@ -1998,10 +1999,11 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!addrarestock`",           value: "💎 Add a single Rare Username account." },
           { name: "`j!addmultistock <entries>`", value: "📥 Bulk-add up to **500** accounts at once.\nFormat: `username:password:cookie` per entry (space or newline separated)." },
           { name: "`j!addapikeys <key...>`",    value: "🔑 Add API keys to the pool." },
-          { name: "`j!lockstock <tier>`",       value: "🔒 Lock a stock tier so users can't generate." },
-          { name: "`j!unlockstock <tier>`",     value: "🔓 Unlock a stock tier." },
-          { name: "`j!lockallstocks`",          value: "🔒 Lock all tiers at once." },
-          { name: "`j!unlockallstocks`",        value: "🔓 Unlock all tiers at once." },
+          { name: "`j!lockstock <tier>`",          value: "🔒 Lock a stock tier so users can't generate." },
+          { name: "`j!unlockstock <tier>`",      value: "🔓 Unlock a stock tier." },
+          { name: "`j!lockallstocks`",           value: "🔒 Lock all tiers at once." },
+          { name: "`j!unlockallstocks`",         value: "🔓 Unlock all tiers at once." },
+          { name: "`j!setcooldown <mins>`",      value: "⏱️ Set the main generate cooldown. Use `agegroup` as first arg for age group.\nExample: `j!setcooldown 5` · `j!setcooldown agegroup 3` · `j!setcooldown 0` removes it." },
         )
         .setFooter({ text: "CoolGEN · Prefix: j!" })
         .setTimestamp();
