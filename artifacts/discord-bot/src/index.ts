@@ -205,7 +205,41 @@ client.on("messageCreate", async (message: Message) => {
     return;
   }
 
-  if (!message.content.startsWith(PREFIX)) return;
+  const VALID_COMMANDS = new Set([
+    "generate","generatepremium","generategod","generatealt","generateagegroupalt","generaterare",
+    "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
+    "stock","premiumstock","godstock","agegroupstock","rarestock","allstocks",
+    "lockstock","unlockstock","lockallstocks","unlockallstocks",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help",
+  ]);
+
+  const lowerContent = message.content.toLowerCase().trim();
+
+  // Case-insensitive prefix match (handles J!generate, j!Generate, etc.)
+  if (!lowerContent.startsWith("j!")) {
+    // Fuzzy detection — patterns like !jgenerate, !j generate, j generate
+    const fuzzyPatterns = [
+      /^!j!?\s*(\w+)/,   // !jgenerate or !j generate
+      /^j\s+(\w+)/,      // j generate (space instead of !)
+    ];
+    for (const pattern of fuzzyPatterns) {
+      const match = lowerContent.match(pattern);
+      if (match) {
+        const guessed = match[1].toLowerCase();
+        if (VALID_COMMANDS.has(guessed)) {
+          await message.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0xff9900)
+                .setDescription(`❌ Wrong command format! The correct command is \`j!${guessed}\``),
+            ],
+          });
+          return;
+        }
+      }
+    }
+    return;
+  }
 
   const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = args[0]?.toLowerCase();
