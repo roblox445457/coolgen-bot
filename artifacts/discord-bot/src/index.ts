@@ -128,8 +128,10 @@ const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup" | "rare">()
 // Cooldowns — can be adjusted at runtime with j!setcooldown
 let GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 let AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
+const BULK_GEN_COOLDOWN_MS = 15 * 60 * 1000;
 const generateCooldowns = new Map<string, number>();
 const ageGroupCooldowns = new Map<string, number>();
+const bulkGenCooldowns = new Map<string, number>();
 
 // Pending accounts for users whose DMs are off
 interface PendingAccount {
@@ -252,6 +254,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleUser(message, args[1]);
   } else if (command === "accountdays") {
     await handleAccountDays(message, args[1]);
+  } else if (command === "bulkgen") {
+    await handleBulkGen(message);
   } else if (command === "setcooldown") {
     await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "help") {
@@ -1621,6 +1625,122 @@ async function handleAccountDays(message: Message, username: string | undefined)
   if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
 
   await loading.edit({ embeds: [embed] });
+}
+
+async function handleBulkGen(message: Message) {
+  if (lockedStocks.has("free")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Free stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
+
+  const last = bulkGenCooldowns.get(message.author.id);
+  if (last) {
+    const remaining = BULK_GEN_COOLDOWN_MS - (Date.now() - last);
+    if (remaining > 0) {
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.ceil((remaining % 60000) / 1000);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("⏳ Cooldown Active")
+            .setDescription(`You must wait **${mins}m ${secs}s** before using \`j!bulkgen\` again.`),
+        ],
+      });
+      return;
+    }
+  }
+
+  const member = await message.guild!.members.fetch(message.author.id).catch(() => null);
+  const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+  const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+
+  const limit    = hasGod ? 10 : hasPremium ? 6 : 4;
+  const tierLabel = hasGod ? "🌟 God" : hasPremium ? "⭐ Premium" : "🟢 Free";
+  const color     = hasGod ? 0x9b59b6 : hasPremium ? 0xf5a623 : 0x00c851;
+
+  const available = stockCount();
+  if (available === 0) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Out of Stock")
+          .setColor(0xff4444)
+          .setDescription("There are no free accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  const toSend = Math.min(limit, available);
+  const accounts: Account[] = [];
+  for (let i = 0; i < toSend; i++) {
+    const acc = popAccount();
+    if (acc) accounts.push(acc);
+  }
+
+  bulkGenCooldowns.set(message.author.id, Date.now());
+  const cdEnd = Math.floor((Date.now() + BULK_GEN_COOLDOWN_MS) / 1000);
+
+  try {
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      const profile = await getRobloxProfile(account.username);
+      const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+      const createdStr = profile?.createdAt
+        ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+        : "N/A";
+      const ageDaysStr = profile?.ageDays != null ? `${profile.ageDays.toLocaleString()} days` : "N/A";
+      const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+      const dmEmbed = new EmbedBuilder()
+        .setTitle(`🎮 Bulk Account ${i + 1} of ${accounts.length}`)
+        .setColor(color)
+        .addFields(
+          { name: "👤 Username",     value: `\`${account.username}\``,                         inline: true },
+          { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+          { name: "🆔 User ID",      value: `\`${profile?.userId ?? "N/A"}\``,                 inline: true },
+          { name: "🔑 Password",     value: `\`${account.password}\``,                         inline: true },
+          { name: "📅 Created",      value: `\`${createdStr}\``,                               inline: true },
+          { name: "⏳ Account Age",  value: `\`${ageDaysStr}\``,                               inline: true },
+          { name: "👫 Friends",      value: `\`${fmt(profile?.friends ?? null)}\``,            inline: true },
+          { name: "👥 Followers",    value: `\`${fmt(profile?.followers ?? null)}\``,          inline: true },
+          { name: "➡️ Following",    value: `\`${fmt(profile?.following ?? null)}\``,          inline: true },
+        )
+        .setFooter({ text: "CoolGEN Bulk Gen — Login at roblox.com" })
+        .setTimestamp();
+
+      if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+      if (profileUrl) dmEmbed.setURL(profileUrl);
+
+      await message.author.send({ embeds: [dmEmbed] });
+
+      const cookieLine = account.cookie
+        ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
+        : `⛔ **NO .ROBLOSECURITY FOR THIS STOCK**`;
+      await message.author.send(`${cookieLine}\n\n**ts** \`${account.username}:${account.password}\``);
+    }
+
+    const tierBadge = hasGod ? "CoolGEN God" : hasPremium ? "CoolGEN Premium" : "CoolGEN";
+    const channelEmbed = new EmbedBuilder()
+      .setColor(color)
+      .setTitle("✅ Bulk Generate Complete")
+      .setDescription(
+        `${message.author} — **${accounts.length}** account(s) sent to your DMs!\n` +
+        `${tierLabel} tier · ⏳ You can bulk gen again <t:${cdEnd}:R>`
+      )
+      .setFooter({ text: tierBadge })
+      .setTimestamp();
+
+    await message.reply({ embeds: [channelEmbed] });
+  } catch {
+    // DMs closed — return all accounts to stock
+    for (const acc of accounts) addAccount(acc);
+    bulkGenCooldowns.delete(message.author.id);
+    await message.reply({ embeds: [dmOffEmbed()], components: [dmOffRow()] });
+  }
 }
 
 async function handleSetCooldown(message: Message, tierArg: string | undefined, minutesArg: string | undefined) {
