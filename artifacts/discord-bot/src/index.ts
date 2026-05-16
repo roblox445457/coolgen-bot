@@ -125,12 +125,10 @@ const sessions = new Map<string, Session>();
 // Locked stock tiers — users cannot generate from locked tiers
 const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup" | "rare">();
 
-// 9-minute cooldown for generate commands (per user)
-const GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
+// Cooldowns — can be adjusted at runtime with j!setcooldown
+let GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
+let AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
 const generateCooldowns = new Map<string, number>();
-
-// 12-minute cooldown for age group generate (per user)
-const AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
 const ageGroupCooldowns = new Map<string, number>();
 
 // Pending accounts for users whose DMs are off
@@ -254,6 +252,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleUser(message, args[1]);
   } else if (command === "accountdays") {
     await handleAccountDays(message, args[1]);
+  } else if (command === "setcooldown") {
+    await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -1621,6 +1621,69 @@ async function handleAccountDays(message: Message, username: string | undefined)
   if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
 
   await loading.edit({ embeds: [embed] });
+}
+
+async function handleSetCooldown(message: Message, tierArg: string | undefined, minutesArg: string | undefined) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+    });
+    return;
+  }
+
+  // j!setcooldown <minutes>              → sets main cooldown
+  // j!setcooldown agegroup <minutes>     → sets age group cooldown
+  let tier: "main" | "agegroup" = "main";
+  let minutesStr: string | undefined;
+
+  if (tierArg?.toLowerCase() === "agegroup") {
+    tier = "agegroup";
+    minutesStr = minutesArg;
+  } else {
+    minutesStr = tierArg;
+  }
+
+  const minutes = parseFloat(minutesStr ?? "");
+  if (isNaN(minutes) || minutes < 0) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ Invalid Usage")
+          .setDescription(
+            "**Set main cooldown:**\n`j!setcooldown <minutes>`\n\n" +
+            "**Set age group cooldown:**\n`j!setcooldown agegroup <minutes>`\n\n" +
+            "Examples: `j!setcooldown 5` · `j!setcooldown 0` · `j!setcooldown agegroup 3`"
+          ),
+      ],
+    });
+    return;
+  }
+
+  const ms = Math.round(minutes * 60 * 1000);
+
+  if (tier === "agegroup") {
+    AGE_GROUP_COOLDOWN_MS = ms;
+  } else {
+    GENERATE_COOLDOWN_MS = ms;
+  }
+
+  const label = tier === "agegroup" ? "🎂 Age Group" : "🎮 Main";
+  const display = minutes === 0 ? "**no cooldown**" : `**${minutes} minute${minutes !== 1 ? "s" : ""}**`;
+
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00c851)
+        .setTitle("✅ Cooldown Updated")
+        .addFields(
+          { name: "Tier",        value: label,   inline: true },
+          { name: "New Cooldown", value: display, inline: true },
+        )
+        .setFooter({ text: "Change is live immediately — existing cooldowns are unaffected." })
+        .setTimestamp(),
+    ],
+  });
 }
 
 function buildHelpTabEmbed(tab: string): EmbedBuilder {
