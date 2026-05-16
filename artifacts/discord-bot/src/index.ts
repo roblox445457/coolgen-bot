@@ -313,9 +313,12 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (profile?.avatarUrl) embed.setThumbnail(profile.avatarUrl);
       if (profileUrl) embed.setURL(profileUrl);
 
+      const cookieText = account.cookie
+        ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
+        : `⛔ **NO .ROBLOXSECURITY FOR THIS STOCK**`;
       await interaction.reply({
         embeds: [embed],
-        content: `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``,
+        content: `${cookieText}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`,
         ephemeral: true,
       });
       await interaction.message.delete().catch(() => null);
@@ -743,9 +746,11 @@ async function deliverAccount(
 
   try {
     await message.author.send({ embeds: [dmEmbed] });
+    const cookieLine = account.cookie
+      ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
+      : `⛔ **NO .ROBLOXSECURITY FOR THIS STOCK**`;
     await message.author.send(
-      `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\`` +
-      `\n\n**ts** \`${account.username}:${account.password}\``
+      `${cookieLine}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`
     );
 
     const channelEmbed = new EmbedBuilder()
@@ -1719,8 +1724,8 @@ async function handleBulkGen(message: Message) {
 
       const cookieLine = account.cookie
         ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
-        : `⛔ **NO .ROBLOSECURITY FOR THIS STOCK**`;
-      await message.author.send(`${cookieLine}\n\n**ts** \`${account.username}:${account.password}\``);
+        : `⛔ **NO .ROBLOXSECURITY FOR THIS STOCK**`;
+      await message.author.send(`${cookieLine}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`);
     }
 
     const tierBadge = hasGod ? "CoolGEN God" : hasPremium ? "CoolGEN Premium" : "CoolGEN";
