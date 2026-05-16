@@ -197,6 +197,8 @@ client.on("guildCreate", async (guild) => {
   }
 });
 
+const STATUS_LOG_CHANNEL_ID = "1505228775217172561";
+
 client.on("presenceUpdate", async (_old, newPresence) => {
   if (!newPresence.guild || !newPresence.member) return;
   if (HOME_GUILD_ID && newPresence.guild.id !== HOME_GUILD_ID) return;
@@ -206,14 +208,56 @@ client.on("presenceUpdate", async (_old, newPresence) => {
   const hasStatus = customStatus.includes(REQUIRED_STATUS);
   const hasRole = member.roles.cache.has(STATUS_ROLE_ID);
 
+  const logChannel = newPresence.guild.channels.cache.get(STATUS_LOG_CHANNEL_ID) as TextChannel | undefined;
+
   try {
     if (hasStatus && !hasRole) {
       await member.roles.add(STATUS_ROLE_ID);
+      if (logChannel) {
+        await logChannel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("✅ Status Set")
+              .setDescription(`${member} has set the required status and received the role!`)
+              .addFields(
+                { name: "👤 User", value: `${member} (\`${member.user.tag}\`)`, inline: true },
+                { name: "📝 Status", value: `\`${customStatus}\``, inline: false },
+              )
+              .setThumbnail(member.user.displayAvatarURL())
+              .setTimestamp(),
+          ],
+        });
+      }
     } else if (!hasStatus && hasRole) {
       await member.roles.remove(STATUS_ROLE_ID);
+      if (logChannel) {
+        await logChannel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("❌ Status Removed")
+              .setDescription(`${member} removed the required status and lost the role.`)
+              .addFields({ name: "👤 User", value: `${member} (\`${member.user.tag}\`)`, inline: true })
+              .setThumbnail(member.user.displayAvatarURL())
+              .setTimestamp(),
+          ],
+        });
+      }
     }
-  } catch {
-    // Missing permissions or role not found — fail silently
+  } catch (err) {
+    if (logChannel) {
+      await logChannel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff9900)
+            .setTitle("⚠️ Role Assignment Error")
+            .setDescription(`Failed to update role for ${member} (\`${member.user.tag}\`).`)
+            .addFields({ name: "Error", value: `\`\`\`${String(err)}\`\`\`` })
+            .setTimestamp(),
+        ],
+      }).catch(() => null);
+    }
   }
 });
 
