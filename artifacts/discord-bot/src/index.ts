@@ -11,6 +11,9 @@ import {
   TextInputBuilder,
   TextInputStyle,
   Interaction,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ComponentType,
 } from "discord.js";
 import axios from "axios";
 import {
@@ -221,6 +224,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleAddAgeGroupStock(message);
   } else if (command === "addrarestock") {
     await handleAddRareStock(message);
+  } else if (command === "addmultistock") {
+    await handleAddMultiStock(message, args.slice(1));
   } else if (command === "stock") {
     await handleStockCount(message);
   } else if (command === "premiumstock") {
@@ -425,6 +430,13 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         .setRequired(true);
       modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
       await interaction.showModal(modal);
+    }
+
+  } else if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === "help_tab") {
+      const tab = interaction.values[0];
+      const embed = buildHelpTabEmbed(tab);
+      await interaction.update({ embeds: [embed] });
     }
 
   } else if (interaction.isModalSubmit()) {
@@ -716,19 +728,31 @@ async function deliverAccount(
   else generateCooldowns.set(message.author.id, Date.now());
   const cdEnd = Math.floor((Date.now() + cooldownMs) / 1000);
 
+  // Determine CoolGEN tier badge for the channel reply
+  let member = message.member;
+  if (!member && message.guild) {
+    member = await message.guild.members.fetch(message.author.id).catch(() => null);
+  }
+  const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+  const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+  const tierBadge  = hasGod ? "CoolGEN God" : hasPremium ? "CoolGEN Premium" : "CoolGEN";
+
   try {
     await message.author.send({ embeds: [dmEmbed] });
-    await message.author.send(`🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(color)
-          .setDescription(
-            `${successEmoji} Check your DMs, ${message.author}! Your account has been sent.\n⏳ You can generate again <t:${cdEnd}:R>`
-          )
-          .setTimestamp(),
-      ],
-    });
+    await message.author.send(
+      `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\`` +
+      `\n\n**ts** \`${account.username}:${account.password}\``
+    );
+
+    const channelEmbed = new EmbedBuilder()
+      .setColor(color)
+      .setTitle("✅ Roblox Account Generated")
+      .setDescription(`Check your DMs for your account, ${message.author}!\n⏳ You can generate again <t:${cdEnd}:R>`)
+      .setFooter({ text: tierBadge })
+      .setTimestamp();
+    if (profile?.avatarUrl) channelEmbed.setThumbnail(profile.avatarUrl);
+
+    await message.reply({ embeds: [channelEmbed] });
     await postStockWebhook(account.username, tier, profile?.avatarUrl ?? null, message.author);
   } catch {
     pendingAccounts.set(message.author.id, { account, tier });
@@ -1599,53 +1623,208 @@ async function handleAccountDays(message: Message, username: string | undefined)
   await loading.edit({ embeds: [embed] });
 }
 
-async function handleHelpGenerate(message: Message) {
-  const embed = new EmbedBuilder()
-    .setTitle("j!generate — Help")
-    .setColor(0xe8192c)
-    .setDescription("Get a free Roblox account from the stock, delivered straight to your DMs.")
-    .addFields(
-      { name: "Usage", value: "`j!generate`" },
-      {
-        name: "What you get (via DM)",
-        value:
-          "• **Username** — The Roblox username\n" +
-          "• **Password** — The account password\n" +
-          "• **Security Cookie** — The `.ROBLOSECURITY` cookie for instant login",
-      },
-      {
-        name: "Note",
-        value: "Make sure your DMs are open from server members or the bot can't reach you.",
-      }
-    )
-    .setTimestamp();
+function buildHelpTabEmbed(tab: string): EmbedBuilder {
+  switch (tab) {
+    case "generate":
+      return new EmbedBuilder()
+        .setTitle("🎮 CoolGEN — Generate Commands")
+        .setColor(0xe8192c)
+        .setDescription("Use these commands to receive Roblox accounts.")
+        .addFields(
+          { name: "`j!generate`",             value: "Get a free Roblox account sent to your DMs. *(9m cooldown)*" },
+          { name: "`j!generatepremium`",       value: "⭐ Get a Premium account (requires Premium role). *(9m cooldown)*" },
+          { name: "`j!generategod`",           value: "🌟 Get a God-tier account (requires God role). *(9m cooldown)*" },
+          { name: "`j!generateagegroupalt`",   value: "🎂 Get an Age Group account. *(12m cooldown)*" },
+          { name: "`j!generaterare`",          value: "💎 Get a Rare Username account. *(5-day server membership required)*" },
+          { name: "`j!generatealt`",           value: "🔑 Deliver an account to your webhook (requires API key)." },
+        )
+        .addFields({ name: "📝 Note", value: "Make sure your DMs are open so the bot can reach you!" })
+        .setFooter({ text: "CoolGEN · Prefix: j!" })
+        .setTimestamp();
 
-  await message.reply({ embeds: [embed] });
+    case "stock":
+      return new EmbedBuilder()
+        .setTitle("📦 CoolGEN — Stock Commands")
+        .setColor(0x5865f2)
+        .setDescription("Check how many accounts are available in each tier.")
+        .addFields(
+          { name: "`j!stock`",          value: "🟢 Free account stock count." },
+          { name: "`j!premiumstock`",   value: "⭐ Premium account stock count." },
+          { name: "`j!godstock`",       value: "🌟 God-tier account stock count." },
+          { name: "`j!agegroupstock`",  value: "🎂 Age Group account stock count." },
+          { name: "`j!rarestock`",      value: "💎 Rare Username account stock count." },
+          { name: "`j!allstocks`",      value: "📊 View all stock counts at once." },
+        )
+        .setFooter({ text: "CoolGEN · Prefix: j!" })
+        .setTimestamp();
+
+    case "admin":
+      return new EmbedBuilder()
+        .setTitle("🔒 CoolGEN — Admin Commands")
+        .setColor(0xff4444)
+        .setDescription("Restricted commands — owner only.")
+        .addFields(
+          { name: "`j!addstock`",              value: "➕ Add a single account to free stock (step-by-step)." },
+          { name: "`j!addpremiumstock`",        value: "⭐ Add a single account to premium stock." },
+          { name: "`j!addgodstock`",            value: "🌟 Add a single account to God stock." },
+          { name: "`j!addagegroupaccounts`",    value: "🎂 Add a single Age Group account." },
+          { name: "`j!addrarestock`",           value: "💎 Add a single Rare Username account." },
+          { name: "`j!addmultistock <entries>`", value: "📥 Bulk-add up to **500** accounts at once.\nFormat: `username:password:cookie` per entry (space or newline separated)." },
+          { name: "`j!addapikeys <key...>`",    value: "🔑 Add API keys to the pool." },
+          { name: "`j!lockstock <tier>`",       value: "🔒 Lock a stock tier so users can't generate." },
+          { name: "`j!unlockstock <tier>`",     value: "🔓 Unlock a stock tier." },
+          { name: "`j!lockallstocks`",          value: "🔒 Lock all tiers at once." },
+          { name: "`j!unlockallstocks`",        value: "🔓 Unlock all tiers at once." },
+        )
+        .setFooter({ text: "CoolGEN · Prefix: j!" })
+        .setTimestamp();
+
+    case "utility":
+      return new EmbedBuilder()
+        .setTitle("🛠️ CoolGEN — Utility Commands")
+        .setColor(0x00c851)
+        .addFields(
+          { name: "`j!user <username>`",       value: "Look up a Roblox user's full profile." },
+          { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
+          { name: "`j!showapipanel`",          value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
+          { name: "`j!help`",                  value: "Show this help menu." },
+        )
+        .setFooter({ text: "CoolGEN · Prefix: j!" })
+        .setTimestamp();
+
+    default:
+      return new EmbedBuilder()
+        .setTitle("CoolGEN — Help")
+        .setColor(0xe8192c)
+        .setDescription("Select a category below to browse commands.")
+        .setFooter({ text: "CoolGEN · Prefix: j!" })
+        .setTimestamp();
+  }
+}
+
+async function handleHelpGenerate(message: Message) {
+  await message.reply({ embeds: [buildHelpTabEmbed("generate")] });
 }
 
 async function handleHelp(message: Message) {
   const embed = new EmbedBuilder()
-    .setTitle("Jelly Bot — Help")
+    .setTitle("CoolGEN — Help")
     .setColor(0xe8192c)
-    .addFields(
-      { name: "`j!generate`", value: "Get a free Roblox account sent to your DMs. *(9m cooldown)*" },
-      { name: "`j!stock`", value: "Check how many free accounts are in stock." },
-      { name: "`j!generatepremium`", value: "⭐ Get a premium account (requires Premium role). *(9m cooldown)*" },
-      { name: "`j!premiumstock`", value: "⭐ Check how many premium accounts are in stock." },
-      { name: "`j!generategod`", value: "🌟 Get a God-tier account (requires God role). *(9m cooldown)*" },
-      { name: "`j!godstock`", value: "🌟 Check how many God-tier accounts are in stock." },
-      { name: "`j!generatealt`", value: "🔑 Deliver an account to your configured webhook (requires API key)." },
-      { name: "`j!showapipanel`", value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
-      { name: "`j!addstock`", value: "Add an account to free stock (restricted)." },
-      { name: "`j!addpremiumstock`", value: "⭐ Add an account to premium stock (restricted)." },
-      { name: "`j!addgodstock`", value: "🌟 Add an account to God stock (restricted)." },
-      { name: "`j!addapikeys <key...>`", value: "🔑 Add API keys to the pool (restricted)." },
-      { name: "`j!user <username>`", value: "Look up a Roblox user's full profile." },
-      { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
-      { name: "`j!help`", value: "Show this help message." },
-    )
-    .setFooter({ text: "Prefix: j!" })
+    .setDescription("👋 Welcome to **CoolGEN**! Select a category below to browse commands.")
+    .setFooter({ text: "CoolGEN · Prefix: j!" })
     .setTimestamp();
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("help_tab")
+    .setPlaceholder("📂 Choose a category...")
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel("🎮 Generate")
+        .setDescription("Commands to generate Roblox accounts")
+        .setValue("generate"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("📦 Stock")
+        .setDescription("Check stock counts for each tier")
+        .setValue("stock"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("🔒 Admin")
+        .setDescription("Owner-only commands for managing stock")
+        .setValue("admin"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("🛠️ Utility")
+        .setDescription("Lookup tools and settings")
+        .setValue("utility"),
+    );
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+  await message.reply({ embeds: [embed], components: [row] });
+}
+
+async function handleAddMultiStock(message: Message, args: string[]) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+    });
+    return;
+  }
+
+  // Allow entries split by spaces OR newlines; rebuild from the raw message content
+  const raw = message.content.slice(message.content.toLowerCase().indexOf("addmultistock") + "addmultistock".length).trim();
+  const entries = raw.split(/[\s\n]+/).filter(Boolean);
+
+  if (entries.length === 0) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ No Entries Provided")
+          .setDescription(
+            "Provide accounts after the command, one per space or newline.\n\n" +
+            "**Format:** `username:password:cookie`\n" +
+            "**Example:** `j!addmultistock Harsah_Fatimah:barbie234:_|WARNING:-DO-NOT...|_`\n\n" +
+            "Up to **500** entries at once."
+          ),
+      ],
+    });
+    return;
+  }
+
+  if (entries.length > 500) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setDescription(`❌ Too many entries (**${entries.length}**). Maximum is **500** per command.`),
+      ],
+    });
+    return;
+  }
+
+  let added = 0;
+  const noSecurityEntries: string[] = [];
+  const invalidEntries: string[] = [];
+
+  for (const entry of entries) {
+    const parts = entry.split(":");
+    // Must have at least username:password
+    if (parts.length < 2 || !parts[0] || !parts[1]) {
+      invalidEntries.push(entry);
+      continue;
+    }
+
+    const username = parts[0];
+    const password = parts[1];
+    // Cookie is everything from the 3rd colon onward (cookies contain colons)
+    const cookie = parts.slice(2).join(":");
+
+    if (!cookie) {
+      noSecurityEntries.push(username);
+      continue;
+    }
+
+    addAccount({ username, password, cookie });
+    added++;
+  }
+
+  const totalStock = stockCount();
+  const lines: string[] = [];
+  if (added > 0)              lines.push(`✅ **${added}** account(s) added to free stock.`);
+  if (invalidEntries.length)  lines.push(`⚠️ **${invalidEntries.length}** invalid entry(ies) skipped (bad format).`);
+
+  const embed = new EmbedBuilder()
+    .setColor(added > 0 ? 0x00c851 : 0xff9900)
+    .setTitle("📥 Multi-Stock Import")
+    .setDescription(lines.join("\n") || "Nothing was added.")
+    .addFields({ name: "📦 Free Stock Total", value: `\`${totalStock} account(s)\``, inline: true })
+    .setTimestamp();
+
+  if (noSecurityEntries.length > 0) {
+    const list = noSecurityEntries.slice(0, 20).join(", ") + (noSecurityEntries.length > 20 ? ` …and ${noSecurityEntries.length - 20} more` : "");
+    embed.addFields({
+      name: `⛔ NO .ROBLOXSECURITY FOR THIS STOCK (${noSecurityEntries.length})`,
+      value: list,
+    });
+  }
 
   await message.reply({ embeds: [embed] });
 }
