@@ -132,9 +132,12 @@ const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup" | "rare">()
 let GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 let AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
 const BULK_GEN_COOLDOWN_MS = 15 * 60 * 1000;
+const BULK_GEN_STATUS_PENALTY_MS = 60 * 60 * 1000; // 1 hour penalty for dropping status
 const generateCooldowns = new Map<string, number>();
 const ageGroupCooldowns = new Map<string, number>();
 const bulkGenCooldowns = new Map<string, number>();
+// Tracks free-tier users who bulkgen'd using the status requirement
+const bulkGenStatusUsers = new Set<string>();
 
 // Pending accounts for users whose DMs are off
 interface PendingAccount {
@@ -231,13 +234,26 @@ client.on("presenceUpdate", async (_old, newPresence) => {
       }
     } else if (!hasStatus && hasRole) {
       await member.roles.remove(STATUS_ROLE_ID);
+
+      // Apply 1-hour penalty if this user bulkgen'd using the status requirement
+      let penaltyApplied = false;
+      if (bulkGenStatusUsers.has(member.id)) {
+        bulkGenStatusUsers.delete(member.id);
+        // Set cooldown to expire 1 hour from now
+        bulkGenCooldowns.set(member.id, Date.now() - BULK_GEN_COOLDOWN_MS + BULK_GEN_STATUS_PENALTY_MS);
+        penaltyApplied = true;
+      }
+
       if (logChannel) {
+        const penaltyNote = penaltyApplied
+          ? `\n⏳ **1-hour penalty** applied to \`j!bulkgen\` for dropping the status after using it.`
+          : "";
         await logChannel.send({
           embeds: [
             new EmbedBuilder()
               .setColor(0xff4444)
               .setTitle("❌ Status Removed")
-              .setDescription(`${member} removed the required status and lost the role.`)
+              .setDescription(`${member} removed the required status and lost the role.${penaltyNote}`)
               .addFields({ name: "👤 User", value: `${member} (\`${member.user.tag}\`)`, inline: true })
               .setThumbnail(member.user.displayAvatarURL())
               .setTimestamp(),
@@ -1920,6 +1936,8 @@ async function handleBulkGen(message: Message) {
 
   bulkGenCooldowns.set(message.author.id, Date.now());
   const cdEnd = Math.floor((Date.now() + BULK_GEN_COOLDOWN_MS) / 1000);
+  // Track that this free-tier user bulkgen'd using the status requirement
+  if (!hasGod && !hasPremium) bulkGenStatusUsers.add(message.author.id);
 
   try {
     for (let i = 0; i < accounts.length; i++) {
