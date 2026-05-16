@@ -110,6 +110,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildPresences,
   ],
 });
 
@@ -1805,6 +1806,33 @@ async function handleBulkGen(message: Message) {
   const limit    = hasGod ? 10 : hasPremium ? 6 : 4;
   const tierLabel = hasGod ? "🌟 God" : hasPremium ? "⭐ Premium" : "🟢 Free";
   const color     = hasGod ? 0x9b59b6 : hasPremium ? 0xf5a623 : 0x00c851;
+
+  const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/KzGC6wksRk";
+
+  // Free-tier users must have the required status and be online
+  if (!hasGod && !hasPremium) {
+    const presence = member?.presence;
+    const isOnline = presence?.status === "online";
+    const customStatus = presence?.activities.find(a => a.type === 4)?.state ?? "";
+    const hasStatus = customStatus.includes(REQUIRED_STATUS);
+
+    if (!isOnline || !hasStatus) {
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("❌ Status Requirement Not Met")
+            .setDescription(
+              "To use `j!bulkgen` on the **Free** tier you must:\n\n" +
+              `**1.** Set your Discord custom status to:\n\`\`\`${REQUIRED_STATUS}\`\`\`` +
+              "**2.** Be **Online** (not idle, DND, or offline)\n\n" +
+              "⭐ Upgrade to **Premium** or **God** to skip this requirement."
+            ),
+        ],
+      });
+      return;
+    }
+  }
 
   const available = stockCount();
   if (available === 0) {
