@@ -128,6 +128,28 @@ export function rareStockCount(): number {
   return loadFile(RARE_STOCK_FILE).length;
 }
 
+// ── Dump stock ────────────────────────────────────────────────────────────────
+
+const DUMP_STOCK_FILE = join(__dirname, "../dump-stock.json");
+
+export function addDumpAccount(account: Account): void {
+  const accounts = loadFile(DUMP_STOCK_FILE);
+  accounts.push(account);
+  saveFile(DUMP_STOCK_FILE, accounts);
+}
+
+export function popDumpAccount(): Account | null {
+  const accounts = loadFile(DUMP_STOCK_FILE);
+  if (accounts.length === 0) return null;
+  const account = accounts.shift()!;
+  saveFile(DUMP_STOCK_FILE, accounts);
+  return account;
+}
+
+export function dumpStockCount(): number {
+  return loadFile(DUMP_STOCK_FILE).length;
+}
+
 // ── Bulk read for dump ────────────────────────────────────────────────────────
 
 export function getAllAccounts(): Account[]         { return loadFile(STOCK_FILE); }
@@ -135,3 +157,4 @@ export function getAllPremiumAccounts(): Account[]  { return loadFile(PREMIUM_ST
 export function getAllGodAccounts(): Account[]      { return loadFile(GOD_STOCK_FILE); }
 export function getAllAgeGroupAccounts(): Account[] { return loadFile(AGE_GROUP_STOCK_FILE); }
 export function getAllRareAccounts(): Account[]     { return loadFile(RARE_STOCK_FILE); }
+export function getAllDumpAccounts(): Account[]     { return loadFile(DUMP_STOCK_FILE); }

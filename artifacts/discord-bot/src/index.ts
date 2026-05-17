@@ -23,7 +23,8 @@ import {
   addPremiumAccount, popPremiumAccount, premiumStockCount,
   addAgeGroupAccount, popAgeGroupAccount, ageGroupStockCount,
   addRareAccount, popRareAccount, rareStockCount,
-  getAllAccounts, getAllGodAccounts, getAllPremiumAccounts, getAllAgeGroupAccounts, getAllRareAccounts,
+  getAllAccounts, getAllGodAccounts, getAllPremiumAccounts, getAllAgeGroupAccounts, getAllRareAccounts, getAllDumpAccounts,
+  addDumpAccount, popDumpAccount, dumpStockCount,
 } from "./stock.js";
 import {
   addApiKeys, apiKeyPoolCount,
@@ -120,14 +121,14 @@ const client = new Client({
 // Track active addstock sessions: userId -> step + collected data
 interface Session {
   step: "username" | "password" | "cookie";
-  tier: "free" | "premium" | "god" | "agegroup";
+  tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump";
   username?: string;
   password?: string;
 }
 const sessions = new Map<string, Session>();
 
 // Locked stock tiers — users cannot generate from locked tiers
-const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup" | "rare">();
+const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup" | "rare" | "dump">();
 
 // Cooldowns — can be adjusted at runtime with j!setcooldown
 let GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
@@ -144,7 +145,7 @@ const bulkGenStatusUsers = new Set<string>();
 const pendingMultiStock = new Map<string, string[]>(); // userId → raw entries
 
 // Fakestock — owner can set a fake count per tier to prank users
-type StockTier = "free" | "premium" | "god" | "agegroup" | "rare";
+type StockTier = "free" | "premium" | "god" | "agegroup" | "rare" | "dump";
 const fakeStockSettings = new Map<StockTier, number>(); // tier → fake count (only present when ON)
 
 function fakeAmount(tier: StockTier): number | null {
@@ -154,7 +155,7 @@ function fakeAmount(tier: StockTier): number | null {
 // Pending accounts for users whose DMs are off
 interface PendingAccount {
   account: Account;
-  tier: "free" | "premium" | "god" | "agegroup" | "rare";
+  tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump";
 }
 const pendingAccounts = new Map<string, PendingAccount>();
 
@@ -170,7 +171,7 @@ const pendingBulkAccounts = new Map<string, PendingBulkAccounts>();
 // Pending captcha verifications
 interface PendingCaptcha {
   account: Account;
-  tier: "free" | "premium" | "god" | "agegroup";
+  tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump";
   correctColor: string;
   originalMessage: Message;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -312,9 +313,9 @@ client.on("messageCreate", async (message: Message) => {
   const VALID_COMMANDS = new Set([
     "generate","generatepremium","generategod","generatealt","generateagegroupalt","generaterare",
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
-    "stock","premiumstock","godstock","agegroupstock","rarestock","allstocks",
+    "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock","generatedump",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock","generatedumpexportaccounts",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -383,6 +384,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleAgeGroupStockCount(message);
   } else if (command === "rarestock") {
     await handleRareStockCount(message);
+  } else if (command === "dumpstock") {
+    await handleDumpStockCount(message);
   } else if (command === "allstocks") {
     await handleAllStock(message);
   } else if (command === "lockstock") {
@@ -408,7 +411,9 @@ client.on("messageCreate", async (message: Message) => {
   } else if (command === "fakestock") {
     await handleFakeStock(message, args[1], args[2], args[3]);
   } else if (command === "generatedump") {
-    await handleGenerateDump(message, args[1]);
+    await handleGenerateDump(message);
+  } else if (command === "exportaccounts") {
+    await handleExportAccounts(message, args[1]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -689,12 +694,14 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         : tier === "premium"  ? addPremiumAccount
         : tier === "agegroup" ? addAgeGroupAccount
         : tier === "rare"     ? addRareAccount
+        : tier === "dump"     ? addDumpAccount
         : addAccount;
       const countFn =
         tier === "god"      ? godStockCount
         : tier === "premium"  ? premiumStockCount
         : tier === "agegroup" ? ageGroupStockCount
         : tier === "rare"     ? rareStockCount
+        : tier === "dump"     ? dumpStockCount
         : stockCount;
 
       let added = 0, noCookie = 0;
@@ -715,6 +722,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         : tier === "premium"  ? "⭐ Premium"
         : tier === "agegroup" ? "🎂 Age Group"
         : tier === "rare"     ? "💎 Rare Usernames"
+        : tier === "dump"     ? "🗑️ Dump"
         : "🟢 Free";
 
       const lines: string[] = [];
@@ -809,7 +817,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
 
 async function postStockWebhook(
   robloxUsername: string,
-  tier: "free" | "premium" | "god" | "agegroup" | "rare",
+  tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump",
   robloxAvatarUrl: string | null,
   discordUser: { username: string; displayAvatarURL(opts?: object): string }
 ) {
@@ -817,10 +825,11 @@ async function postStockWebhook(
   if (!url) return;
 
   const tierLabel =
-    tier === "god" ? "🌟 God"
-    : tier === "premium" ? "⭐ Premium"
+    tier === "god"      ? "🌟 God"
+    : tier === "premium"  ? "⭐ Premium"
     : tier === "agegroup" ? "🎂 Age Group"
-    : tier === "rare" ? "💎 Rare Username"
+    : tier === "rare"     ? "💎 Rare Username"
+    : tier === "dump"     ? "🗑️ Dump"
     : "🟢 Free";
 
   const free     = fakeAmount("free")     ?? stockCount();
@@ -828,6 +837,7 @@ async function postStockWebhook(
   const god      = fakeAmount("god")      ?? godStockCount();
   const ageGroup = fakeAmount("agegroup") ?? ageGroupStockCount();
   const rare     = fakeAmount("rare")     ?? rareStockCount();
+  const dump     = fakeAmount("dump")     ?? dumpStockCount();
 
   const stockBar = (n: number) => {
     const filled = Math.min(n, 10);
@@ -836,7 +846,7 @@ async function postStockWebhook(
 
   const embed: Record<string, unknown> = {
     title: "📤 Account Generated",
-    color: tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : tier === "agegroup" ? 0x00bcd4 : tier === "rare" ? 0xffd700 : 0x00c851,
+    color: tier === "god" ? 0x9b59b6 : tier === "premium" ? 0xf5a623 : tier === "agegroup" ? 0x00bcd4 : tier === "rare" ? 0xffd700 : tier === "dump" ? 0xe74c3c : 0x00c851,
     author: {
       name: `Generated by ${discordUser.username}`,
       icon_url: discordUser.displayAvatarURL({ size: 64 }),
@@ -850,8 +860,9 @@ async function postStockWebhook(
       { name: "🌟 God",            value: stockBar(god),      inline: true },
       { name: "🎂 Age Group",      value: stockBar(ageGroup), inline: true },
       { name: "💎 Rare Usernames", value: stockBar(rare),     inline: true },
+      { name: "🗑️ Dump",           value: stockBar(dump),     inline: true },
     ],
-    footer: { text: `Total remaining: ${free + premium + god + ageGroup + rare} account(s)` },
+    footer: { text: `Total remaining: ${free + premium + god + ageGroup + rare + dump} account(s)` },
     timestamp: new Date().toISOString(),
   };
 
@@ -936,7 +947,7 @@ function captchaRow() {
 async function sendCaptcha(
   message: Message,
   account: Account,
-  tier: "free" | "premium" | "god" | "agegroup" | "rare"
+  tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump"
 ) {
   const correct = CAPTCHA_COLORS[Math.floor(Math.random() * CAPTCHA_COLORS.length)];
 
@@ -989,7 +1000,7 @@ async function sendCaptcha(
 
 async function deliverAccount(
   account: Account,
-  tier: "free" | "premium" | "god" | "agegroup" | "rare",
+  tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump",
   message: Message
 ) {
   const profile = await getRobloxProfile(account.username);
@@ -1001,24 +1012,27 @@ async function deliverAccount(
   const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
 
   const tierLabel =
-    tier === "god" ? "🌟 Your God-Tier Roblox Account"
-    : tier === "premium" ? "⭐ Your Premium Roblox Account"
+    tier === "god"      ? "🌟 Your God-Tier Roblox Account"
+    : tier === "premium"  ? "⭐ Your Premium Roblox Account"
     : tier === "agegroup" ? "🎂 Your Age Group Roblox Account"
-    : tier === "rare" ? "💎 Your Rare Username Roblox Account"
+    : tier === "rare"     ? "💎 Your Rare Username Roblox Account"
+    : tier === "dump"     ? "🗑️ Your Dump Roblox Account"
     : "🎮 Your Roblox Account";
   const color =
-    tier === "god" ? 0x9b59b6
-    : tier === "premium" ? 0xf5a623
+    tier === "god"      ? 0x9b59b6
+    : tier === "premium"  ? 0xf5a623
     : tier === "agegroup" ? 0x00bcd4
-    : tier === "rare" ? 0xffd700
+    : tier === "rare"     ? 0xffd700
+    : tier === "dump"     ? 0xe74c3c
     : 0x00c851;
   const footer =
-    tier === "god" ? "🌟 God-Tier Account — Login at roblox.com"
-    : tier === "premium" ? "⭐ Premium Account — Login at roblox.com"
+    tier === "god"      ? "🌟 God-Tier Account — Login at roblox.com"
+    : tier === "premium"  ? "⭐ Premium Account — Login at roblox.com"
     : tier === "agegroup" ? "🎂 Age Group Account — Login at roblox.com"
-    : tier === "rare" ? "💎 Rare Username Account — Login at roblox.com"
+    : tier === "rare"     ? "💎 Rare Username Account — Login at roblox.com"
+    : tier === "dump"     ? "🗑️ Dump Account — Login at roblox.com"
     : "Login at roblox.com — keep these credentials safe!";
-  const successEmoji = tier === "god" ? "🌟" : tier === "premium" ? "⭐" : tier === "agegroup" ? "🎂" : tier === "rare" ? "💎" : "✅";
+  const successEmoji = tier === "god" ? "🌟" : tier === "premium" ? "⭐" : tier === "agegroup" ? "🎂" : tier === "rare" ? "💎" : tier === "dump" ? "🗑️" : "✅";
 
   const dmEmbed = new EmbedBuilder()
     .setTitle(tierLabel)
@@ -1109,7 +1123,7 @@ async function handleFakeStock(
           .setDescription(
             "**Turn on:** `j!fakestock on <amount> <tier>`\n" +
             "**Turn off:** `j!fakestock off <tier>`\n\n" +
-            "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare`\n\n" +
+            "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare` · `dump`\n\n" +
             "**Example:** `j!fakestock on 500 free`\n" +
             "When on, stock commands show the fake amount and anyone who tries to generate gets pranked."
           ),
@@ -1120,10 +1134,10 @@ async function handleFakeStock(
 
   if (toggle === "off") {
     const tier = (tierArg?.toLowerCase() ?? amountArg?.toLowerCase()) as StockTier | undefined;
-    const validTiers: StockTier[] = ["free", "premium", "god", "agegroup", "rare"];
+    const validTiers: StockTier[] = ["free", "premium", "god", "agegroup", "rare", "dump"];
     if (!tier || !validTiers.includes(tier)) {
       await message.reply({
-        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Specify a tier: `free`, `premium`, `god`, `agegroup`, `rare`")],
+        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Specify a tier: `free`, `premium`, `god`, `agegroup`, `rare`, `dump`")],
       });
       return;
     }
@@ -1137,7 +1151,7 @@ async function handleFakeStock(
   // toggle === "on"
   const amount = parseInt(amountArg ?? "", 10);
   const tier = tierArg?.toLowerCase() as StockTier | undefined;
-  const validTiers: StockTier[] = ["free", "premium", "god", "agegroup", "rare"];
+  const validTiers: StockTier[] = ["free", "premium", "god", "agegroup", "rare", "dump"];
 
   if (isNaN(amount) || amount < 0) {
     await message.reply({
@@ -1147,7 +1161,7 @@ async function handleFakeStock(
   }
   if (!tier || !validTiers.includes(tier)) {
     await message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Specify a valid tier: `free`, `premium`, `god`, `agegroup`, `rare`")],
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Specify a valid tier: `free`, `premium`, `god`, `agegroup`, `rare`, `dump`")],
     });
     return;
   }
@@ -1368,7 +1382,8 @@ async function handleAllStock(message: Message) {
   const god      = fakeAmount("god")      ?? godStockCount();
   const ageGroup = fakeAmount("agegroup") ?? ageGroupStockCount();
   const rare     = fakeAmount("rare")     ?? rareStockCount();
-  const total = free + premium + god + ageGroup + rare;
+  const dump     = fakeAmount("dump")     ?? dumpStockCount();
+  const total = free + premium + god + ageGroup + rare + dump;
   await message.reply({
     embeds: [
       new EmbedBuilder()
@@ -1380,6 +1395,7 @@ async function handleAllStock(message: Message) {
           { name: "🌟 God",             value: `\`${god}\` account(s)`,      inline: true },
           { name: "🎂 Age Group",       value: `\`${ageGroup}\` account(s)`, inline: true },
           { name: "💎 Rare Usernames",  value: `\`${rare}\` account(s)`,     inline: true },
+          { name: "🗑️ Dump",            value: `\`${dump}\` account(s)`,     inline: true },
         )
         .setFooter({ text: `Total: ${total} account(s)` })
         .setTimestamp(),
@@ -1395,8 +1411,8 @@ async function handleLockStock(message: Message, tierArg: string, lock: boolean)
     return;
   }
 
-  const tierMap: Record<string, "free" | "premium" | "god" | "agegroup" | "rare"> = {
-    free: "free", premium: "premium", god: "god", agegroup: "agegroup", rare: "rare",
+  const tierMap: Record<string, "free" | "premium" | "god" | "agegroup" | "rare" | "dump"> = {
+    free: "free", premium: "premium", god: "god", agegroup: "agegroup", rare: "rare", dump: "dump",
   };
   const tier = tierMap[tierArg?.toLowerCase()];
 
@@ -1405,7 +1421,7 @@ async function handleLockStock(message: Message, tierArg: string, lock: boolean)
       embeds: [
         new EmbedBuilder()
           .setColor(0xff4444)
-          .setDescription("❌ Invalid tier. Use: `free`, `premium`, `god`, `agegroup`, or `rare`"),
+          .setDescription("❌ Invalid tier. Use: `free`, `premium`, `god`, `agegroup`, `rare`, or `dump`"),
       ],
     });
     return;
@@ -1413,7 +1429,7 @@ async function handleLockStock(message: Message, tierArg: string, lock: boolean)
 
   if (lock) lockedStocks.add(tier); else lockedStocks.delete(tier);
 
-  const tierLabel = tier === "god" ? "🌟 God" : tier === "premium" ? "⭐ Premium" : tier === "agegroup" ? "🎂 Age Group" : "🟢 Free";
+  const tierLabel = tier === "god" ? "🌟 God" : tier === "premium" ? "⭐ Premium" : tier === "agegroup" ? "🎂 Age Group" : tier === "rare" ? "💎 Rare" : tier === "dump" ? "🗑️ Dump Account" : "🟢 Free";
   const action = lock ? "🔒 Locked" : "🔓 Unlocked";
   const color  = lock ? 0xff4444 : 0x00c851;
 
@@ -1434,7 +1450,7 @@ async function handleLockAllStocks(message: Message, lock: boolean) {
     return;
   }
 
-  const allTiers = ["free", "premium", "god", "agegroup", "rare"] as const;
+  const allTiers = ["free", "premium", "god", "agegroup", "rare", "dump"] as const;
   if (lock) allTiers.forEach((t) => lockedStocks.add(t));
   else lockedStocks.clear();
 
@@ -1539,6 +1555,17 @@ async function handleRareStockCount(message: Message) {
       new EmbedBuilder()
         .setColor(0xffd700)
         .setDescription(`💎 **Rare Usernames Stock:** \`${count}\` account(s) available`),
+    ],
+  });
+}
+
+async function handleDumpStockCount(message: Message) {
+  const count = fakeAmount("dump") ?? dumpStockCount();
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xe74c3c)
+        .setDescription(`🗑️ **Dump Stock:** \`${count}\` account(s) available`),
     ],
   });
 }
@@ -2444,6 +2471,7 @@ async function handleAddMultiStock(message: Message, _args: string[]) {
       new StringSelectMenuOptionBuilder().setLabel("🌟 God").setValue("god").setDescription("God tier accounts"),
       new StringSelectMenuOptionBuilder().setLabel("🎂 Age Group").setValue("agegroup").setDescription("Age group accounts"),
       new StringSelectMenuOptionBuilder().setLabel("💎 Rare Usernames").setValue("rare").setDescription("Rare username accounts"),
+      new StringSelectMenuOptionBuilder().setLabel("🗑️ Dump").setValue("dump").setDescription("Dump tier accounts"),
     );
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
@@ -2460,7 +2488,56 @@ async function handleAddMultiStock(message: Message, _args: string[]) {
   });
 }
 
-async function handleGenerateDump(message: Message, tierArg: string | undefined) {
+async function handleGenerateDump(message: Message, _unused?: string) {
+  const fake = fakeAmount("dump");
+  if (fake !== null) {
+    try {
+      await message.author.send(`😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** dump accounts in stock`);
+    } catch {
+      await message.reply({ content: `😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** dump accounts in stock`, flags: [4096] });
+    }
+    return;
+  }
+
+  if (lockedStocks.has("dump")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Dump stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
+
+  const remaining = checkCooldown(message.author.id);
+  if (remaining !== null) {
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.ceil((remaining % 60000) / 1000);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("⏳ Cooldown Active")
+          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
+      ],
+    });
+    return;
+  }
+
+  const account = popDumpAccount();
+  if (!account) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Dump Stock Empty")
+          .setColor(0xff4444)
+          .setDescription("There are no dump accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  await sendCaptcha(message, account, "dump");
+}
+
+async function handleExportAccounts(message: Message, tierArg: string | undefined) {
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
@@ -2469,18 +2546,18 @@ async function handleGenerateDump(message: Message, tierArg: string | undefined)
   }
 
   const tier = tierArg?.toLowerCase();
-  const validTiers = ["free", "premium", "god", "agegroup", "rare", "all"] as const;
+  const validTiers = ["free", "premium", "god", "agegroup", "rare", "dump", "all"] as const;
 
   if (!tier || !(validTiers as readonly string[]).includes(tier)) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0xff9900)
-          .setTitle("⚙️ Generate Dump Usage")
+          .setTitle("⚙️ Export Accounts Usage")
           .setDescription(
-            "`j!generatedump <tier>`\n\n" +
-            "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare` · `all`\n\n" +
-            "Sends a `.txt` file with all accounts in that tier in `username:password:cookie` format.\n" +
+            "`j!exportaccounts <tier>`\n\n" +
+            "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare` · `dump` · `all`\n\n" +
+            "Sends a `.txt` file of all accounts in that tier.\n" +
             "`all` exports every tier combined into one file."
           ),
       ],
@@ -2496,6 +2573,7 @@ async function handleGenerateDump(message: Message, tierArg: string | undefined)
   if (tier === "god" || tier === "all")      sections.push({ label: "GOD",       accounts: getAllGodAccounts() });
   if (tier === "agegroup" || tier === "all") sections.push({ label: "AGEGROUP",  accounts: getAllAgeGroupAccounts() });
   if (tier === "rare" || tier === "all")     sections.push({ label: "RARE",      accounts: getAllRareAccounts() });
+  if (tier === "dump" || tier === "all")     sections.push({ label: "DUMP",      accounts: getAllDumpAccounts() });
 
   const totalAccounts = sections.reduce((n, s) => n + s.accounts.length, 0);
 
