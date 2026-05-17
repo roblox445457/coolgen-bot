@@ -127,3 +127,11 @@ export function popRareAccount(): Account | null {
 export function rareStockCount(): number {
   return loadFile(RARE_STOCK_FILE).length;
 }
+
+// ── Bulk read for dump ────────────────────────────────────────────────────────
+
+export function getAllAccounts(): Account[]         { return loadFile(STOCK_FILE); }
+export function getAllPremiumAccounts(): Account[]  { return loadFile(PREMIUM_STOCK_FILE); }
+export function getAllGodAccounts(): Account[]      { return loadFile(GOD_STOCK_FILE); }
+export function getAllAgeGroupAccounts(): Account[] { return loadFile(AGE_GROUP_STOCK_FILE); }
+export function getAllRareAccounts(): Account[]     { return loadFile(RARE_STOCK_FILE); }

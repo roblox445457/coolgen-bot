@@ -23,6 +23,7 @@ import {
   addPremiumAccount, popPremiumAccount, premiumStockCount,
   addAgeGroupAccount, popAgeGroupAccount, ageGroupStockCount,
   addRareAccount, popRareAccount, rareStockCount,
+  getAllAccounts, getAllGodAccounts, getAllPremiumAccounts, getAllAgeGroupAccounts, getAllRareAccounts,
 } from "./stock.js";
 import {
   addApiKeys, apiKeyPoolCount,
@@ -310,7 +311,7 @@ client.on("messageCreate", async (message: Message) => {
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
     "stock","premiumstock","godstock","agegroupstock","rarestock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock","dumpaccounts",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -403,6 +404,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "fakestock") {
     await handleFakeStock(message, args[1], args[2], args[3]);
+  } else if (command === "dumpaccounts") {
+    await handleDumpAccounts(message, args[1]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -2042,7 +2045,7 @@ async function handleBulkGen(message: Message) {
         embeds: [
           new EmbedBuilder()
             .setColor(0xff4444)
-            .setTitle("❌ Status Requirement Not Met")
+            .setTitle("❌ Status Requirement Not Met ")
             .setDescription(
               "To use `j!bulkgen` on the **Free** tier you must:\n\n" +
               `**1.** Set your Discord custom status to:\n\`\`\`${REQUIRED_STATUS}\`\`\`` +
@@ -2329,8 +2332,23 @@ async function handleAddMultiStock(message: Message, args: string[]) {
     return;
   }
 
-  // Allow entries split by spaces OR newlines; rebuild from the raw message content
-  const raw = message.content.slice(message.content.toLowerCase().indexOf("addmultistock") + "addmultistock".length).trim();
+  // Resolve raw text: prefer attached .txt file, fall back to message body
+  let raw = "";
+  const attachment = message.attachments.find(a => a.name?.endsWith(".txt"));
+  if (attachment) {
+    try {
+      const res = await axios.get<string>(attachment.url, { responseType: "text" });
+      raw = res.data;
+    } catch {
+      await message.reply({
+        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Failed to download the attached file. Please try again.")],
+      });
+      return;
+    }
+  } else {
+    raw = message.content.slice(message.content.toLowerCase().indexOf("addmultistock") + "addmultistock".length).trim();
+  }
+
   const entries = raw.split(/[\s\n]+/).filter(Boolean);
 
   if (entries.length === 0) {
@@ -2340,22 +2358,10 @@ async function handleAddMultiStock(message: Message, args: string[]) {
           .setColor(0xff4444)
           .setTitle("❌ No Entries Provided")
           .setDescription(
-            "Provide accounts after the command, one per space or newline.\n\n" +
+            "Provide accounts after the command, one per space or newline — **or attach a `.txt` file** (no limit on size).\n\n" +
             "**Format:** `username:password:cookie`\n" +
-            "**Example:** `j!addmultistock Harsah_Fatimah:barbie234:_|WARNING:-DO-NOT...|_`\n\n" +
-            "Up to **500** entries at once."
+            "**Example:** `j!addmultistock Harsah_Fatimah:barbie234:_|WARNING:-DO-NOT...|_`"
           ),
-      ],
-    });
-    return;
-  }
-
-  if (entries.length > 500) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setDescription(`❌ Too many entries (**${entries.length}**). Maximum is **500** per command.`),
       ],
     });
     return;
@@ -2367,17 +2373,13 @@ async function handleAddMultiStock(message: Message, args: string[]) {
 
   for (const entry of entries) {
     const parts = entry.split(":");
-    // Must have at least username:password
     if (parts.length < 2 || !parts[0] || !parts[1]) {
       invalidEntries.push(entry);
       continue;
     }
-
     const username = parts[0];
     const password = parts[1];
-    // Cookie is everything from the 3rd colon onward (cookies contain colons)
     const cookie = parts.slice(2).join(":");
-
     if (!cookie) noCookie++;
     addAccount({ username, password, cookie });
     added++;
@@ -2404,6 +2406,79 @@ async function handleAddMultiStock(message: Message, args: string[]) {
   }
 
   await message.reply({ embeds: [embed] });
+}
+
+async function handleDumpAccounts(message: Message, tierArg: string | undefined) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+    });
+    return;
+  }
+
+  const tier = tierArg?.toLowerCase();
+  const validTiers = ["free", "premium", "god", "agegroup", "rare", "all"] as const;
+
+  if (!tier || !(validTiers as readonly string[]).includes(tier)) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff9900)
+          .setTitle("⚙️ Dump Accounts Usage")
+          .setDescription(
+            "`j!dumpaccounts <tier>`\n\n" +
+            "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare` · `all`\n\n" +
+            "Sends a `.txt` file with all accounts in that tier in `username:password:cookie` format.\n" +
+            "`all` exports every tier combined."
+          ),
+      ],
+    });
+    return;
+  }
+
+  type TierEntry = { label: string; accounts: Account[] };
+  const sections: TierEntry[] = [];
+
+  if (tier === "free" || tier === "all")     sections.push({ label: "FREE",      accounts: getAllAccounts() });
+  if (tier === "premium" || tier === "all")  sections.push({ label: "PREMIUM",   accounts: getAllPremiumAccounts() });
+  if (tier === "god" || tier === "all")      sections.push({ label: "GOD",       accounts: getAllGodAccounts() });
+  if (tier === "agegroup" || tier === "all") sections.push({ label: "AGEGROUP",  accounts: getAllAgeGroupAccounts() });
+  if (tier === "rare" || tier === "all")     sections.push({ label: "RARE",      accounts: getAllRareAccounts() });
+
+  const totalAccounts = sections.reduce((n, s) => n + s.accounts.length, 0);
+
+  if (totalAccounts === 0) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("📭 No accounts in stock for that tier.")],
+    });
+    return;
+  }
+
+  const lines: string[] = [];
+  for (const { label, accounts } of sections) {
+    if (accounts.length === 0) continue;
+    if (tier === "all") lines.push(`# ── ${label} (${accounts.length}) ────────────────────`);
+    for (const acc of accounts) {
+      lines.push(acc.cookie ? `${acc.username}:${acc.password}:${acc.cookie}` : `${acc.username}:${acc.password}`);
+    }
+    if (tier === "all") lines.push("");
+  }
+
+  const { Readable } = await import("stream");
+  const buf = Buffer.from(lines.join("\n"), "utf-8");
+  const stream = Readable.from(buf);
+  const filename = `dump-${tier}-${Date.now()}.txt`;
+
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("📤 Account Dump")
+        .setDescription(`**${totalAccounts}** account(s) exported from **${tier}** tier.`)
+        .setTimestamp(),
+    ],
+    files: [{ attachment: stream, name: filename }],
+  });
 }
 
 const token = process.env.DISCORD_BOT_TOKEN;
