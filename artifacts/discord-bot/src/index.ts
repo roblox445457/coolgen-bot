@@ -135,9 +135,11 @@ let GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 let AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
 const BULK_GEN_COOLDOWN_MS = 15 * 60 * 1000;
 const BULK_GEN_STATUS_PENALTY_MS = 60 * 60 * 1000; // 1 hour penalty for dropping status
+const BULK_GEN_DUMP_COOLDOWN_MS = 2; // 2ms cooldown for dump bulk gen
 const generateCooldowns = new Map<string, number>();
 const ageGroupCooldowns = new Map<string, number>();
 const bulkGenCooldowns = new Map<string, number>();
+const bulkGenDumpCooldowns = new Map<string, number>();
 // Tracks free-tier users who bulkgen'd using the status requirement
 const bulkGenStatusUsers = new Set<string>();
 
@@ -315,7 +317,7 @@ client.on("messageCreate", async (message: Message) => {
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
     "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock","generatedumpexportaccounts",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","setcooldown","help","fakestock","generatedumpexportaccounts",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -406,6 +408,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleAccountDays(message, args[1]);
   } else if (command === "bulkgen") {
     await handleBulkGen(message);
+  } else if (command === "bulkgendump") {
+    await handleBulkGenDump(message);
   } else if (command === "setcooldown") {
     await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "fakestock") {
@@ -2230,6 +2234,132 @@ async function handleBulkGen(message: Message) {
   } catch {
     // DMs closed — hold accounts and offer to show here
     pendingBulkAccounts.set(message.author.id, { accounts, color, tierBadge, cdEnd });
+    await message.reply({ embeds: [bulkDmOffEmbed(accounts.length)], components: [bulkDmOffRow()] });
+  }
+}
+
+async function handleBulkGenDump(message: Message) {
+  if (lockedStocks.has("dump")) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Dump stock is currently locked. Please check back later.")],
+    });
+    return;
+  }
+
+  const last = bulkGenDumpCooldowns.get(message.author.id);
+  if (last) {
+    const remaining = BULK_GEN_DUMP_COOLDOWN_MS - (Date.now() - last);
+    if (remaining > 0) {
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("⏳ Cooldown Active")
+            .setDescription(`You must wait before using \`j!bulkgendump\` again.`),
+        ],
+      });
+      return;
+    }
+  }
+
+  // Require custom status to use j!bulkgendump
+  const member = await message.guild!.members.fetch(message.author.id).catch(() => null);
+  const presence = member?.presence;
+  const isOnline = presence?.status === "online";
+  const customStatus = presence?.activities.find(a => a.type === 4)?.state ?? "";
+  const hasStatus = customStatus.includes(REQUIRED_STATUS);
+
+  if (!isOnline || !hasStatus) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ Status Requirement Not Met")
+          .setDescription(
+            "To use `j!bulkgendump` you must:\n\n" +
+            `**1.** Set your Discord custom status to:\n\`\`\`${REQUIRED_STATUS}\`\`\`` +
+            "**2.** Be **Online** (not idle, DND, or offline)"
+          ),
+      ],
+    });
+    return;
+  }
+
+  const available = dumpStockCount();
+  if (available === 0) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Dump Stock Empty")
+          .setColor(0xff4444)
+          .setDescription("There are no dump accounts in stock right now. Check back later!"),
+      ],
+    });
+    return;
+  }
+
+  const toSend = Math.min(30, available);
+  const accounts: Account[] = [];
+  for (let i = 0; i < toSend; i++) {
+    const acc = popDumpAccount();
+    if (acc) accounts.push(acc);
+  }
+
+  bulkGenDumpCooldowns.set(message.author.id, Date.now());
+  const cdEnd = Math.floor((Date.now() + BULK_GEN_DUMP_COOLDOWN_MS) / 1000);
+
+  try {
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      const profile = await getRobloxProfile(account.username);
+      const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+      const createdStr = profile?.createdAt
+        ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+        : "N/A";
+      const ageDaysStr = profile?.ageDays != null ? `${profile.ageDays.toLocaleString()} days` : "N/A";
+      const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+      const dmEmbed = new EmbedBuilder()
+        .setTitle(`🗑️ Dump Bulk Account ${i + 1} of ${accounts.length}`)
+        .setColor(0x95a5a6)
+        .addFields(
+          { name: "👤 Username",     value: `\`${account.username}\``,                         inline: true },
+          { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+          { name: "🆔 User ID",      value: `\`${profile?.userId ?? "N/A"}\``,                 inline: true },
+          { name: "🔑 Password",     value: `\`${account.password}\``,                         inline: true },
+          { name: "📅 Created",      value: `\`${createdStr}\``,                               inline: true },
+          { name: "⏳ Account Age",  value: `\`${ageDaysStr}\``,                               inline: true },
+          { name: "👫 Friends",      value: `\`${fmt(profile?.friends ?? null)}\``,            inline: true },
+          { name: "👥 Followers",    value: `\`${fmt(profile?.followers ?? null)}\``,          inline: true },
+          { name: "➡️ Following",    value: `\`${fmt(profile?.following ?? null)}\``,          inline: true },
+        )
+        .setFooter({ text: "CoolGEN Dump Bulk Gen — Login at roblox.com" })
+        .setTimestamp();
+
+      if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+      if (profileUrl) dmEmbed.setURL(profileUrl);
+
+      await message.author.send({ embeds: [dmEmbed] });
+
+      const cookieLine = account.cookie
+        ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
+        : `⛔ **NO .ROBLOXSECURITY FOR THIS STOCK**`;
+      await message.author.send(`${cookieLine}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`);
+    }
+
+    const channelEmbed = new EmbedBuilder()
+      .setColor(0x95a5a6)
+      .setTitle("✅ Dump Bulk Generate Complete")
+      .setDescription(
+        `${message.author} — **${accounts.length}** dump account(s) sent to your DMs!\n` +
+        `🗑️ Dump tier · ⏳ You can bulk gen dump again <t:${cdEnd}:R>`
+      )
+      .setFooter({ text: "CoolGEN Dump Bulk Gen" })
+      .setTimestamp();
+
+    await message.reply({ embeds: [channelEmbed] });
+  } catch {
+    pendingBulkAccounts.set(message.author.id, { accounts, color: 0x95a5a6, tierBadge: "CoolGEN Dump Bulk Gen", cdEnd });
     await message.reply({ embeds: [bulkDmOffEmbed(accounts.length)], components: [bulkDmOffRow()] });
   }
 }
