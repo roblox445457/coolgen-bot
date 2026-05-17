@@ -139,6 +139,14 @@ const bulkGenCooldowns = new Map<string, number>();
 // Tracks free-tier users who bulkgen'd using the status requirement
 const bulkGenStatusUsers = new Set<string>();
 
+// Fakestock — owner can set a fake count per tier to prank users
+type StockTier = "free" | "premium" | "god" | "agegroup" | "rare";
+const fakeStockSettings = new Map<StockTier, number>(); // tier → fake count (only present when ON)
+
+function fakeAmount(tier: StockTier): number | null {
+  return fakeStockSettings.has(tier) ? fakeStockSettings.get(tier)! : null;
+}
+
 // Pending accounts for users whose DMs are off
 interface PendingAccount {
   account: Account;
@@ -302,7 +310,7 @@ client.on("messageCreate", async (message: Message) => {
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
     "stock","premiumstock","godstock","agegroupstock","rarestock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -393,6 +401,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleBulkGen(message);
   } else if (command === "setcooldown") {
     await handleSetCooldown(message, args[1], args[2]);
+  } else if (command === "fakestock") {
+    await handleFakeStock(message, args[1], args[2], args[3]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -745,11 +755,11 @@ async function postStockWebhook(
     : tier === "rare" ? "💎 Rare Username"
     : "🟢 Free";
 
-  const free     = stockCount();
-  const premium  = premiumStockCount();
-  const god      = godStockCount();
-  const ageGroup = ageGroupStockCount();
-  const rare     = rareStockCount();
+  const free     = fakeAmount("free")     ?? stockCount();
+  const premium  = fakeAmount("premium")  ?? premiumStockCount();
+  const god      = fakeAmount("god")      ?? godStockCount();
+  const ageGroup = fakeAmount("agegroup") ?? ageGroupStockCount();
+  const rare     = fakeAmount("rare")     ?? rareStockCount();
 
   const stockBar = (n: number) => {
     const filled = Math.min(n, 10);
@@ -1008,7 +1018,93 @@ function checkCooldown(userId: string): number | null {
   return remaining > 0 ? remaining : null;
 }
 
+async function handleFakeStock(
+  message: Message,
+  toggleArg: string | undefined,
+  amountArg: string | undefined,
+  tierArg: string | undefined,
+) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+    });
+    return;
+  }
+
+  const toggle = toggleArg?.toLowerCase();
+  if (toggle !== "on" && toggle !== "off") {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff9900)
+          .setTitle("⚙️ Fakestock Usage")
+          .setDescription(
+            "**Turn on:** `j!fakestock on <amount> <tier>`\n" +
+            "**Turn off:** `j!fakestock off <tier>`\n\n" +
+            "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare`\n\n" +
+            "**Example:** `j!fakestock on 500 free`\n" +
+            "When on, stock commands show the fake amount and anyone who tries to generate gets pranked."
+          ),
+      ],
+    });
+    return;
+  }
+
+  if (toggle === "off") {
+    const tier = (tierArg?.toLowerCase() ?? amountArg?.toLowerCase()) as StockTier | undefined;
+    const validTiers: StockTier[] = ["free", "premium", "god", "agegroup", "rare"];
+    if (!tier || !validTiers.includes(tier)) {
+      await message.reply({
+        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Specify a tier: `free`, `premium`, `god`, `agegroup`, `rare`")],
+      });
+      return;
+    }
+    fakeStockSettings.delete(tier);
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0x00c851).setDescription(`✅ Fakestock **OFF** for **${tier}** tier. Real stock is shown again.`)],
+    });
+    return;
+  }
+
+  // toggle === "on"
+  const amount = parseInt(amountArg ?? "", 10);
+  const tier = tierArg?.toLowerCase() as StockTier | undefined;
+  const validTiers: StockTier[] = ["free", "premium", "god", "agegroup", "rare"];
+
+  if (isNaN(amount) || amount < 0) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Provide a valid amount (number ≥ 0).")],
+    });
+    return;
+  }
+  if (!tier || !validTiers.includes(tier)) {
+    await message.reply({
+      embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Specify a valid tier: `free`, `premium`, `god`, `agegroup`, `rare`")],
+    });
+    return;
+  }
+
+  fakeStockSettings.set(tier, amount);
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x9b59b6)
+        .setTitle("🎭 Fakestock ON")
+        .setDescription(`**${tier}** tier now shows **${amount}** accounts in stock.\nAnyone who tries to generate will be pranked in their DMs.`),
+    ],
+  });
+}
+
 async function handleGenerate(message: Message) {
+  const fake = fakeAmount("free");
+  if (fake !== null) {
+    try {
+      await message.author.send(`😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** free accounts in stock`);
+    } catch {
+      await message.reply({ content: `😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** free accounts in stock`, flags: [4096] });
+    }
+    return;
+  }
   if (lockedStocks.has("free")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Free stock is currently locked. Please check back later.")],
@@ -1166,7 +1262,7 @@ async function handleSessionReply(message: Message) {
 }
 
 async function handleStockCount(message: Message) {
-  const count = stockCount();
+  const count = fakeAmount("free") ?? stockCount();
   await message.reply({
     embeds: [
       new EmbedBuilder()
@@ -1177,7 +1273,7 @@ async function handleStockCount(message: Message) {
 }
 
 async function handlePremiumStockCount(message: Message) {
-  const count = premiumStockCount();
+  const count = fakeAmount("premium") ?? premiumStockCount();
   await message.reply({
     embeds: [
       new EmbedBuilder()
@@ -1188,7 +1284,7 @@ async function handlePremiumStockCount(message: Message) {
 }
 
 async function handleGodStockCount(message: Message) {
-  const count = godStockCount();
+  const count = fakeAmount("god") ?? godStockCount();
   await message.reply({
     embeds: [
       new EmbedBuilder()
@@ -1199,11 +1295,11 @@ async function handleGodStockCount(message: Message) {
 }
 
 async function handleAllStock(message: Message) {
-  const free = stockCount();
-  const premium = premiumStockCount();
-  const god = godStockCount();
-  const ageGroup = ageGroupStockCount();
-  const rare = rareStockCount();
+  const free     = fakeAmount("free")     ?? stockCount();
+  const premium  = fakeAmount("premium")  ?? premiumStockCount();
+  const god      = fakeAmount("god")      ?? godStockCount();
+  const ageGroup = fakeAmount("agegroup") ?? ageGroupStockCount();
+  const rare     = fakeAmount("rare")     ?? rareStockCount();
   const total = free + premium + god + ageGroup + rare;
   await message.reply({
     embeds: [
@@ -1286,7 +1382,7 @@ async function handleLockAllStocks(message: Message, lock: boolean) {
 }
 
 async function handleAgeGroupStockCount(message: Message) {
-  const count = ageGroupStockCount();
+  const count = fakeAmount("agegroup") ?? ageGroupStockCount();
   await message.reply({
     embeds: [
       new EmbedBuilder()
@@ -1319,6 +1415,15 @@ async function handleAddAgeGroupStock(message: Message) {
 }
 
 async function handleGenerateAgeGroup(message: Message) {
+  const fake = fakeAmount("agegroup");
+  if (fake !== null) {
+    try {
+      await message.author.send(`😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** age group accounts in stock`);
+    } catch {
+      await message.reply({ content: `😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** age group accounts in stock`, flags: [4096] });
+    }
+    return;
+  }
   if (lockedStocks.has("agegroup")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Age Group stock is currently locked. Please check back later.")],
@@ -1360,7 +1465,7 @@ async function handleGenerateAgeGroup(message: Message) {
 }
 
 async function handleRareStockCount(message: Message) {
-  const count = rareStockCount();
+  const count = fakeAmount("rare") ?? rareStockCount();
   await message.reply({
     embeds: [
       new EmbedBuilder()
@@ -1389,6 +1494,15 @@ async function handleAddRareStock(message: Message) {
 }
 
 async function handleGenerateRare(message: Message) {
+  const fake = fakeAmount("rare");
+  if (fake !== null) {
+    try {
+      await message.author.send(`😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** rare username accounts in stock`);
+    } catch {
+      await message.reply({ content: `😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** rare username accounts in stock`, flags: [4096] });
+    }
+    return;
+  }
   if (lockedStocks.has("rare")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Rare Usernames stock is currently locked. Please check back later.")],
@@ -1447,6 +1561,15 @@ async function handleGenerateRare(message: Message) {
 }
 
 async function handleGenerateGod(message: Message) {
+  const fake = fakeAmount("god");
+  if (fake !== null) {
+    try {
+      await message.author.send(`😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** god accounts in stock`);
+    } catch {
+      await message.reply({ content: `😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** god accounts in stock`, flags: [4096] });
+    }
+    return;
+  }
   if (lockedStocks.has("god")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("God stock is currently locked. Please check back later.")],
@@ -1498,6 +1621,15 @@ async function handleGenerateGod(message: Message) {
 }
 
 async function handleGeneratePremium(message: Message) {
+  const fake = fakeAmount("premium");
+  if (fake !== null) {
+    try {
+      await message.author.send(`😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** premium accounts in stock`);
+    } catch {
+      await message.reply({ content: `😂 YOU JUST GOT PRANKED lmao we dont have **${fake}** premium accounts in stock`, flags: [4096] });
+    }
+    return;
+  }
   if (lockedStocks.has("premium")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Premium stock is currently locked. Please check back later.")],
