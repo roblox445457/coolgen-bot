@@ -140,6 +140,9 @@ const bulkGenCooldowns = new Map<string, number>();
 // Tracks free-tier users who bulkgen'd using the status requirement
 const bulkGenStatusUsers = new Set<string>();
 
+// Pending multistock entries waiting for tier selection
+const pendingMultiStock = new Map<string, string[]>(); // userId → raw entries
+
 // Fakestock — owner can set a fake count per tier to prank users
 type StockTier = "free" | "premium" | "god" | "agegroup" | "rare";
 const fakeStockSettings = new Map<StockTier, number>(); // tier → fake count (only present when ON)
@@ -311,7 +314,7 @@ client.on("messageCreate", async (message: Message) => {
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
     "stock","premiumstock","godstock","agegroupstock","rarestock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock","dumpaccounts",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","setcooldown","help","fakestock","generatedump",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -404,8 +407,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "fakestock") {
     await handleFakeStock(message, args[1], args[2], args[3]);
-  } else if (command === "dumpaccounts") {
-    await handleDumpAccounts(message, args[1]);
+  } else if (command === "generatedump") {
+    await handleGenerateDump(message, args[1]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -665,6 +668,68 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const tab = interaction.values[0];
       const embed = buildHelpTabEmbed(tab);
       await interaction.update({ embeds: [embed] });
+
+    } else if (interaction.customId === "multistock_tier") {
+      const userId = interaction.user.id;
+      if (userId !== STOCK_ALLOWED_USER_ID) {
+        await interaction.reply({ content: "❌ You don't have permission.", ephemeral: true });
+        return;
+      }
+
+      const entries = pendingMultiStock.get(userId);
+      if (!entries || entries.length === 0) {
+        await interaction.reply({ content: "❌ No pending entries found — they may have expired. Run the command again.", ephemeral: true });
+        return;
+      }
+      pendingMultiStock.delete(userId);
+
+      const tier = interaction.values[0] as StockTier;
+      const addFn =
+        tier === "god"      ? addGodAccount
+        : tier === "premium"  ? addPremiumAccount
+        : tier === "agegroup" ? addAgeGroupAccount
+        : tier === "rare"     ? addRareAccount
+        : addAccount;
+      const countFn =
+        tier === "god"      ? godStockCount
+        : tier === "premium"  ? premiumStockCount
+        : tier === "agegroup" ? ageGroupStockCount
+        : tier === "rare"     ? rareStockCount
+        : stockCount;
+
+      let added = 0, noCookie = 0;
+      const invalidEntries: string[] = [];
+
+      for (const entry of entries) {
+        const parts = entry.split(":");
+        if (parts.length < 2 || !parts[0] || !parts[1]) { invalidEntries.push(entry); continue; }
+        const cookie = parts.slice(2).join(":");
+        if (!cookie) noCookie++;
+        addFn({ username: parts[0], password: parts[1], cookie });
+        added++;
+      }
+
+      const total = countFn();
+      const tierLabel =
+        tier === "god"      ? "🌟 God"
+        : tier === "premium"  ? "⭐ Premium"
+        : tier === "agegroup" ? "🎂 Age Group"
+        : tier === "rare"     ? "💎 Rare Usernames"
+        : "🟢 Free";
+
+      const lines: string[] = [];
+      if (added > 0)             lines.push(`✅ **${added}** account(s) added to **${tierLabel}** stock.`);
+      if (noCookie > 0)          lines.push(`⚠️ **${noCookie}** added without a .ROBLOSECURITY cookie.`);
+      if (invalidEntries.length) lines.push(`❌ **${invalidEntries.length}** skipped (bad format).`);
+
+      const embed = new EmbedBuilder()
+        .setColor(added > 0 ? 0x00c851 : 0xff9900)
+        .setTitle("📥 Multi-Stock Import")
+        .setDescription(lines.join("\n") || "Nothing was added.")
+        .addFields({ name: `${tierLabel} Stock Total`, value: `\`${total} account(s)\``, inline: true })
+        .setTimestamp();
+
+      await interaction.update({ embeds: [embed], components: [] });
     }
 
   } else if (interaction.isModalSubmit()) {
@@ -2324,7 +2389,7 @@ async function handleHelp(message: Message) {
   await message.reply({ embeds: [embed], components: [row] });
 }
 
-async function handleAddMultiStock(message: Message, args: string[]) {
+async function handleAddMultiStock(message: Message, _args: string[]) {
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
@@ -2358,57 +2423,44 @@ async function handleAddMultiStock(message: Message, args: string[]) {
           .setColor(0xff4444)
           .setTitle("❌ No Entries Provided")
           .setDescription(
-            "Provide accounts after the command, one per space or newline — **or attach a `.txt` file** (no limit on size).\n\n" +
+            "Paste accounts after the command, one per line — **or attach a `.txt` file** (no size limit).\n\n" +
             "**Format:** `username:password:cookie`\n" +
-            "**Example:** `j!addmultistock Harsah_Fatimah:barbie234:_|WARNING:-DO-NOT...|_`"
+            "Then select which tier to add them to from the dropdown."
           ),
       ],
     });
     return;
   }
 
-  let added = 0;
-  let noCookie = 0;
-  const invalidEntries: string[] = [];
+  // Store entries and show tier dropdown
+  pendingMultiStock.set(message.author.id, entries);
 
-  for (const entry of entries) {
-    const parts = entry.split(":");
-    if (parts.length < 2 || !parts[0] || !parts[1]) {
-      invalidEntries.push(entry);
-      continue;
-    }
-    const username = parts[0];
-    const password = parts[1];
-    const cookie = parts.slice(2).join(":");
-    if (!cookie) noCookie++;
-    addAccount({ username, password, cookie });
-    added++;
-  }
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("multistock_tier")
+    .setPlaceholder("Select a tier to add these accounts to…")
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel("🟢 Free").setValue("free").setDescription("Standard free accounts"),
+      new StringSelectMenuOptionBuilder().setLabel("⭐ Premium").setValue("premium").setDescription("Premium tier accounts"),
+      new StringSelectMenuOptionBuilder().setLabel("🌟 God").setValue("god").setDescription("God tier accounts"),
+      new StringSelectMenuOptionBuilder().setLabel("🎂 Age Group").setValue("agegroup").setDescription("Age group accounts"),
+      new StringSelectMenuOptionBuilder().setLabel("💎 Rare Usernames").setValue("rare").setDescription("Rare username accounts"),
+    );
 
-  const totalStock = stockCount();
-  const lines: string[] = [];
-  if (added > 0)             lines.push(`✅ **${added}** account(s) added to free stock.`);
-  if (noCookie > 0)          lines.push(`⚠️ **${noCookie}** account(s) added without a .ROBLOSECURITY cookie.`);
-  if (invalidEntries.length) lines.push(`❌ **${invalidEntries.length}** entry(ies) skipped (bad format — need at least \`username:password\`).`);
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 
-  const embed = new EmbedBuilder()
-    .setColor(added > 0 ? 0x00c851 : 0xff9900)
-    .setTitle("📥 Multi-Stock Import")
-    .setDescription(lines.join("\n") || "Nothing was added.")
-    .addFields({ name: "📦 Free Stock Total", value: `\`${totalStock} account(s)\``, inline: true })
-    .setTimestamp();
-
-  if (noCookie > 0) {
-    embed.addFields({
-      name: "⛔ NO .ROBLOXSECURITY FOR THIS STOCK",
-      value: `${noCookie} account(s) were added without a .ROBLOSECURITY cookie. When users generate these, the cookie field will be empty.`,
-    });
-  }
-
-  await message.reply({ embeds: [embed] });
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("📥 Multi-Stock Import — Select Tier")
+        .setDescription(`**${entries.length}** entries loaded. Pick which tier to add them to:`)
+        .setTimestamp(),
+    ],
+    components: [row],
+  });
 }
 
-async function handleDumpAccounts(message: Message, tierArg: string | undefined) {
+async function handleGenerateDump(message: Message, tierArg: string | undefined) {
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
@@ -2424,12 +2476,12 @@ async function handleDumpAccounts(message: Message, tierArg: string | undefined)
       embeds: [
         new EmbedBuilder()
           .setColor(0xff9900)
-          .setTitle("⚙️ Dump Accounts Usage")
+          .setTitle("⚙️ Generate Dump Usage")
           .setDescription(
-            "`j!dumpaccounts <tier>`\n\n" +
+            "`j!generatedump <tier>`\n\n" +
             "**Tiers:** `free` · `premium` · `god` · `agegroup` · `rare` · `all`\n\n" +
             "Sends a `.txt` file with all accounts in that tier in `username:password:cookie` format.\n" +
-            "`all` exports every tier combined."
+            "`all` exports every tier combined into one file."
           ),
       ],
     });
