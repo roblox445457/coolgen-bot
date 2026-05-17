@@ -213,6 +213,9 @@ client.on("presenceUpdate", async (_old, newPresence) => {
   // Discord clears activity data on disconnect so it would false-trigger removal.
   if (presenceStatus === "offline" || presenceStatus === "invisible") return;
 
+  // Wait 3 seconds to let Discord fully settle the presence data
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
   const customStatus = newPresence.activities.find(a => a.type === 4)?.state ?? "";
   const hasStatus = customStatus.includes(REQUIRED_STATUS);
   const hasRole = member.roles.cache.has(STATUS_ROLE_ID);
