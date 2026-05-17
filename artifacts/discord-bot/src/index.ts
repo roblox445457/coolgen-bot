@@ -2080,6 +2080,8 @@ async function handleBulkGen(message: Message) {
   // Track that this free-tier user bulkgen'd using the status requirement
   if (!hasGod && !hasPremium) bulkGenStatusUsers.add(message.author.id);
 
+  const tierBadge = hasGod ? "CoolGEN God" : hasPremium ? "CoolGEN Premium" : "CoolGEN";
+
   try {
     for (let i = 0; i < accounts.length; i++) {
       const account = accounts[i];
@@ -2119,7 +2121,6 @@ async function handleBulkGen(message: Message) {
       await message.author.send(`${cookieLine}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`);
     }
 
-    const tierBadge = hasGod ? "CoolGEN God" : hasPremium ? "CoolGEN Premium" : "CoolGEN";
     const channelEmbed = new EmbedBuilder()
       .setColor(color)
       .setTitle("✅ Bulk Generate Complete")
