@@ -136,7 +136,7 @@ let AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
 const BULK_GEN_COOLDOWN_MS = 15 * 60 * 1000;
 const BULK_GEN_STATUS_PENALTY_MS = 60 * 60 * 1000; // 1 hour penalty for dropping status
 const BULK_GEN_DUMP_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown
-const BULK_SNIPE_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown for bulksnipe
+const BULK_SNIPE_COOLDOWN_MS = 10 * 1000; // 10 sec cooldown for snipe/bulksnipe
 const generateCooldowns = new Map<string, number>();
 const ageGroupCooldowns = new Map<string, number>();
 const bulkGenCooldowns = new Map<string, number>();
@@ -2393,6 +2393,24 @@ async function checkSnipeUsername(username: string): Promise<boolean> {
 }
 
 async function handleSnipe(message: Message) {
+  const last = bulkSnipeCooldowns.get(message.author.id);
+  if (last) {
+    const remaining = BULK_SNIPE_COOLDOWN_MS - (Date.now() - last);
+    if (remaining > 0) {
+      const secs = Math.ceil(remaining / 1000);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("⏳ Cooldown Active")
+            .setDescription(`You must wait **${secs}s** before using \`j!snipe\` again.`),
+        ],
+      });
+      return;
+    }
+  }
+  bulkSnipeCooldowns.set(message.author.id, Date.now());
+
   const MAX_ATTEMPTS = 500;
   const UPDATE_EVERY = 8;
   const DELAY_MS     = 150;
