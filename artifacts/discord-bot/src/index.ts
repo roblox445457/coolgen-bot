@@ -2779,8 +2779,10 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!generategod`",           value: "🌟 Get a God-tier account (requires God role). *(9m cooldown)*" },
           { name: "`j!generateagegroupalt`",   value: "🎂 Get an Age Group account. *(12m cooldown)*" },
           { name: "`j!generaterare`",          value: "💎 Get a Rare Username account. *(5-day server membership required)*" },
+          { name: "`j!generatedump`",          value: "🗑️ Get a Dump stock account sent to your DMs." },
           { name: "`j!generatealt`",           value: "🔑 Deliver an account to your webhook (requires API key)." },
-          { name: "`j!bulkgen`",               value: "📦 Bulk generate — Free: 4 · Premium: 6 · God: 10 accounts. *(15m cooldown)*" },
+          { name: "`j!bulkgen`",               value: "📦 Bulk generate — Free: 4 · Premium: 6 · God: 10 accounts. *(15m cooldown, Free tier requires custom status)*" },
+          { name: "`j!bulkgendump`",           value: "🗑️ Bulk generate up to **30** Dump accounts at once. *(requires custom status + Online)*" },
         )
         .addFields({ name: "📝 Note", value: "Make sure your DMs are open so the bot can reach you!" })
         .setFooter({ text: "CoolGEN · Prefix: j!" })
@@ -2797,6 +2799,7 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!godstock`",       value: "🌟 God-tier account stock count." },
           { name: "`j!agegroupstock`",  value: "🎂 Age Group account stock count." },
           { name: "`j!rarestock`",      value: "💎 Rare Username account stock count." },
+          { name: "`j!dumpstock`",      value: "🗑️ Dump account stock count." },
           { name: "`j!allstocks`",      value: "📊 View all stock counts at once." },
         )
         .setFooter({ text: "CoolGEN · Prefix: j!" })
@@ -2829,11 +2832,25 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
         .setTitle("🛠️ CoolGEN — Utility Commands")
         .setColor(0x00c851)
         .addFields(
-          { name: "`j!user <username>`",       value: "Look up a Roblox user's full profile." },
-          { name: "`j!accountdays <username>`", value: "Check how old a Roblox account is." },
-          { name: "`j!showapipanel`",          value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
-          { name: "`j!help`",                  value: "Show this help menu." },
+          { name: "`j!user <username>`",        value: "Look up a Roblox user's full profile." },
+          { name: "`j!accountdays <username>`",  value: "Check how old a Roblox account is." },
+          { name: "`j!showapipanel`",            value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
+          { name: "`j!help`",                    value: "Show this help menu." },
         )
+        .setFooter({ text: "CoolGEN · Prefix: j!" })
+        .setTimestamp();
+
+    case "sniper":
+      return new EmbedBuilder()
+        .setTitle("🎯 CoolGEN — Sniper Commands")
+        .setColor(0x5865f2)
+        .setDescription("Find available 5-letter Roblox usernames in real time.")
+        .addFields(
+          { name: "`j!snipe`",           value: "🎯 Search for **1** available 5-letter Roblox username. Shows a live scanning embed while it searches, then DMs you the result. *(10s cooldown)*" },
+          { name: "`j!bulksnipe`",       value: "🎯 Snipe multiple usernames at once — **Premium: 3** · **God: 5**. Shows live progress and DMs all results. *(10s cooldown, Premium+ only)*" },
+          { name: "`j!allsnipedaccs`",   value: "📄 Get a `.txt` file in your DMs listing every username you've sniped this session." },
+        )
+        .addFields({ name: "📝 Note", value: "Usernames are real and checked against the Roblox API — grab them fast before someone else does!" })
         .setFooter({ text: "CoolGEN · Prefix: j!" })
         .setTimestamp();
 
@@ -2871,6 +2888,10 @@ async function handleHelp(message: Message) {
         .setLabel("📦 Stock")
         .setDescription("Check stock counts for each tier")
         .setValue("stock"),
+      new StringSelectMenuOptionBuilder()
+        .setLabel("🎯 Sniper")
+        .setDescription("Find available 5-letter Roblox usernames")
+        .setValue("sniper"),
       new StringSelectMenuOptionBuilder()
         .setLabel("🔒 Admin")
         .setDescription("Owner-only commands for managing stock")
