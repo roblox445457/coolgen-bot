@@ -135,11 +135,13 @@ let GENERATE_COOLDOWN_MS = 9 * 60 * 1000;
 let AGE_GROUP_COOLDOWN_MS = 12 * 60 * 1000;
 const BULK_GEN_COOLDOWN_MS = 15 * 60 * 1000;
 const BULK_GEN_STATUS_PENALTY_MS = 60 * 60 * 1000; // 1 hour penalty for dropping status
-const BULK_GEN_DUMP_COOLDOWN_MS = 2; // 2ms cooldown for dump bulk gen
+const BULK_GEN_DUMP_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown
+const BULK_SNIPE_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown for bulksnipe
 const generateCooldowns = new Map<string, number>();
 const ageGroupCooldowns = new Map<string, number>();
 const bulkGenCooldowns = new Map<string, number>();
 const bulkGenDumpCooldowns = new Map<string, number>();
+const bulkSnipeCooldowns = new Map<string, number>();
 // Tracks free-tier users who bulkgen'd using the status requirement
 const bulkGenStatusUsers = new Set<string>();
 
@@ -317,7 +319,7 @@ client.on("messageCreate", async (message: Message) => {
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
     "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","setcooldown","help","fakestock","generatedumpexportaccounts",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","setcooldown","help","fakestock","generatedumpexportaccounts",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -410,6 +412,10 @@ client.on("messageCreate", async (message: Message) => {
     await handleBulkGen(message);
   } else if (command === "bulkgendump") {
     await handleBulkGenDump(message);
+  } else if (command === "snipe") {
+    await handleSnipe(message);
+  } else if (command === "bulksnipe") {
+    await handleBulkSnipe(message);
   } else if (command === "setcooldown") {
     await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "fakestock") {
@@ -2361,6 +2367,248 @@ async function handleBulkGenDump(message: Message) {
   } catch {
     pendingBulkAccounts.set(message.author.id, { accounts, color: 0x95a5a6, tierBadge: "CoolGEN Dump Bulk Gen", cdEnd });
     await message.reply({ embeds: [bulkDmOffEmbed(accounts.length)], components: [bulkDmOffRow()] });
+  }
+}
+
+// ── Snipe helpers ─────────────────────────────────────────────────────────
+function generateSnipeUsername(): string {
+  const letters = "abcdefghijklmnopqrstuvwxyz";
+  const chars   = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const first   = letters[Math.floor(Math.random() * letters.length)];
+  let rest = "";
+  for (let i = 1; i < 5; i++) rest += chars[Math.floor(Math.random() * chars.length)];
+  return first + rest;
+}
+
+async function checkSnipeUsername(username: string): Promise<boolean> {
+  try {
+    const res = await axios.get("https://auth.roblox.com/v1/usernames/validate", {
+      params: { Username: username, Birthday: "2000-01-01" },
+      timeout: 5000,
+    });
+    return res.data?.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function handleSnipe(message: Message) {
+  const MAX_ATTEMPTS = 500;
+  const UPDATE_EVERY = 8;
+  const DELAY_MS     = 150;
+
+  let attempts = 0;
+  const log: string[] = [];
+
+  const buildScanEmbed = () =>
+    new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle("🎯 Username Sniper — Scanning...")
+      .setDescription(
+        `**Searching for an available 5-letter Roblox username...**\n\n` +
+        `\`\`\`\n${log.slice(-6).join("\n") || "Starting scan..."}\n\`\`\``
+      )
+      .addFields({ name: "Attempts", value: `\`${attempts}\``, inline: true })
+      .setFooter({ text: "CoolGEN Sniper · Result will be DM'd to you" })
+      .setTimestamp();
+
+  const scanning = await message.reply({ embeds: [buildScanEmbed()] });
+
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const username = generateSnipeUsername();
+    attempts++;
+    const available = await checkSnipeUsername(username);
+    log.push(available ? `✅ ${username} — AVAILABLE!` : `❌ ${username}`);
+
+    if (available) {
+      await scanning.edit({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x00c851)
+            .setTitle("🎯 Username Sniper — Found!")
+            .setDescription(
+              `**Found an available username after ${attempts} attempt(s)!**\n\n` +
+              `\`\`\`\n${log.slice(-6).join("\n")}\n\`\`\``
+            )
+            .addFields(
+              { name: "✅ Username", value: `\`${username}\``, inline: true },
+              { name: "Attempts",   value: `\`${attempts}\``,  inline: true },
+            )
+            .setFooter({ text: "CoolGEN Sniper · Check your DMs!" })
+            .setTimestamp(),
+        ],
+      });
+
+      try {
+        await message.author.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("🎯 Sniped Username — Available!")
+              .setDescription(
+                `Here's your available 5-letter Roblox username:\n\n` +
+                `## \`${username}\`\n\n` +
+                `Sign up at: https://www.roblox.com/\n\n` +
+                `⚡ Grab it fast before someone else does!`
+              )
+              .addFields({ name: "Attempts Taken", value: `\`${attempts}\``, inline: true })
+              .setFooter({ text: "CoolGEN Sniper" })
+              .setTimestamp(),
+          ],
+        });
+      } catch {
+        await message.channel.send({
+          content: `${message.author} — DMs are closed! Sniped username: \`${username}\` — sign up at https://www.roblox.com/ fast!`,
+          flags: [4096],
+        });
+      }
+      return;
+    }
+
+    if (attempts % UPDATE_EVERY === 0) {
+      await scanning.edit({ embeds: [buildScanEmbed()] }).catch(() => null);
+    }
+    await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+  }
+
+  await scanning.edit({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xff4444)
+        .setTitle("🎯 Username Sniper — No Luck")
+        .setDescription(`Scanned **${attempts}** usernames but couldn't find an available one this round. Try again!`)
+        .setFooter({ text: "CoolGEN Sniper" })
+        .setTimestamp(),
+    ],
+  });
+}
+
+async function handleBulkSnipe(message: Message) {
+  const member     = await message.guild!.members.fetch(message.author.id).catch(() => null);
+  const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+  const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+
+  if (!hasGod && !hasPremium) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ Premium Required")
+          .setDescription(
+            "`j!bulksnipe` is only available to **Premium** and **God** members.\n\n" +
+            "⭐ Upgrade to Premium to access bulk username sniping!"
+          ),
+      ],
+    });
+    return;
+  }
+
+  const last = bulkSnipeCooldowns.get(message.author.id);
+  if (last) {
+    const remaining = BULK_SNIPE_COOLDOWN_MS - (Date.now() - last);
+    if (remaining > 0) {
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.ceil((remaining % 60000) / 1000);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("⏳ Cooldown Active")
+            .setDescription(`You must wait **${mins}m ${secs}s** before using \`j!bulksnipe\` again.`),
+        ],
+      });
+      return;
+    }
+  }
+
+  const target         = hasGod ? 5 : 3; // God: 5 · Premium: 3
+  const MAX_ATTEMPTS_PER = 300;
+  const DELAY_MS       = 150;
+  const found: string[] = [];
+  const log: string[]   = [];
+  let totalAttempts     = 0;
+
+  const buildEmbed = () =>
+    new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle(`🎯 Bulk Sniper — ${found.length}/${target} Found`)
+      .setDescription(
+        `**Searching for ${target} available 5-letter usernames...**\n\n` +
+        `\`\`\`\n${log.slice(-8).join("\n") || "Starting scan..."}\n\`\`\``
+      )
+      .addFields(
+        { name: "Found",    value: `\`${found.length}/${target}\``, inline: true },
+        { name: "Attempts", value: `\`${totalAttempts}\``,          inline: true },
+      )
+      .setFooter({ text: "CoolGEN Bulk Sniper · Results will be DM'd to you" })
+      .setTimestamp();
+
+  const scanning = await message.reply({ embeds: [buildEmbed()] });
+  bulkSnipeCooldowns.set(message.author.id, Date.now());
+
+  for (let n = 0; n < target; n++) {
+    let foundOne = false;
+    for (let i = 0; i < MAX_ATTEMPTS_PER; i++) {
+      const username = generateSnipeUsername();
+      totalAttempts++;
+      const available = await checkSnipeUsername(username);
+      log.push(available ? `✅ ${username} — FOUND!` : `❌ ${username}`);
+
+      if (available) {
+        found.push(username);
+        foundOne = true;
+        await scanning.edit({ embeds: [buildEmbed()] }).catch(() => null);
+        break;
+      }
+      if (totalAttempts % 8 === 0) {
+        await scanning.edit({ embeds: [buildEmbed()] }).catch(() => null);
+      }
+      await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+    }
+    if (!foundOne) break;
+  }
+
+  const cdEnd = Math.floor((Date.now() + BULK_SNIPE_COOLDOWN_MS) / 1000);
+  await scanning.edit({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(found.length > 0 ? 0x00c851 : 0xff4444)
+        .setTitle("🎯 Bulk Sniper — Complete")
+        .setDescription(
+          found.length > 0
+            ? `Found **${found.length}** username(s) after **${totalAttempts}** attempts!\n\nResults sent to your DMs.\n⏳ Next use: <t:${cdEnd}:R>`
+            : `Couldn't find any available usernames after **${totalAttempts}** attempts. Try again!`
+        )
+        .setFooter({ text: "CoolGEN Bulk Sniper" })
+        .setTimestamp(),
+    ],
+  });
+
+  if (found.length === 0) return;
+
+  try {
+    for (let i = 0; i < found.length; i++) {
+      await message.author.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x00c851)
+            .setTitle(`🎯 Bulk Snipe Result ${i + 1} of ${found.length}`)
+            .setDescription(
+              `## \`${found[i]}\`\n\n` +
+              `Sign up at: https://www.roblox.com/\n\n` +
+              `⚡ Grab it fast before someone else does!`
+            )
+            .setFooter({ text: "CoolGEN Bulk Sniper" })
+            .setTimestamp(),
+        ],
+      });
+    }
+  } catch {
+    const list = found.map(u => `\`${u}\``).join(", ");
+    await message.channel.send({
+      content: `${message.author} — DMs are closed! Sniped usernames: ${list} — sign up at https://www.roblox.com/`,
+      flags: [4096],
+    });
   }
 }
 

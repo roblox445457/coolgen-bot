@@ -1,0 +1,386 @@
+import customtkinter as ctk
+import requests
+import random
+import string
+import threading
+import time
+from tkinter import StringVar, IntVar
+from plyer import notification
+import pyperclip
+import sys
+
+# ── Notifications ──────────────────────────────────────────────────────────
+def notify_if_script():
+    is_exe = getattr(sys, 'frozen', False)
+    if not is_exe:
+        notification.notify(
+            title="Roblox Username Finder",
+            message="Running in script mode. Build to EXE for best experience.",
+            app_name="Roblox Finder",
+            timeout=4
+        )
+
+def notify_found(username, length):
+    notification.notify(
+        title=f"✅ {length}-Letter Username Found!",
+        message=f'"{username}" is available on Roblox!',
+        app_name="Roblox Finder",
+        timeout=5
+    )
+
+# ── Theme ──────────────────────────────────────────────────────────────────
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
+
+ACCENT      = "#FF4444"
+ACCENT_DARK = "#CC2222"
+BG          = "#0D0D0D"
+CARD        = "#161616"
+CARD2       = "#1E1E1E"
+TEXT        = "#F0F0F0"
+MUTED       = "#666666"
+GREEN       = "#22C55E"
+YELLOW      = "#FACC15"
+
+# ── Core Logic ─────────────────────────────────────────────────────────────
+def generate_username(length):
+    chars = string.ascii_lowercase + string.digits
+    first = random.choice(string.ascii_lowercase)
+    rest  = ''.join(random.choices(chars, k=length - 1))
+    return first + rest
+
+def check_username(username):
+    try:
+        r = requests.get(
+            "https://auth.roblox.com/v1/usernames/validate",
+            params={"Username": username, "Birthday": "2000-01-01"},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            return r.json().get("code") == 0
+    except Exception:
+        pass
+    return False
+
+# ── App ────────────────────────────────────────────────────────────────────
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Roblox Username Finder")
+        self.geometry("780x680")
+        self.minsize(780, 680)
+        self.configure(fg_color=BG)
+
+        self._running   = False
+        self._thread    = None
+        self._found     = []
+        self._attempts  = 0
+        self._empty_label = None
+
+        self._build_ui()
+
+    # ── UI Construction ────────────────────────────────────────────────────
+    def _build_ui(self):
+        # Header
+        header = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0, height=72)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        ctk.CTkLabel(
+            header, text="⬛  ROBLOX",
+            font=("Courier New", 22, "bold"), text_color=ACCENT
+        ).pack(side="left", padx=24)
+        ctk.CTkLabel(
+            header, text="USERNAME FINDER",
+            font=("Courier New", 22, "bold"), text_color=TEXT
+        ).pack(side="left")
+        ctk.CTkLabel(
+            header, text="v2.0",
+            font=("Courier New", 11), text_color=MUTED
+        ).pack(side="left", padx=8, pady=(10, 0))
+
+        # Body
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=2)
+
+        left = ctk.CTkFrame(body, fg_color=CARD, corner_radius=14)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self._build_left(left)
+
+        right = ctk.CTkFrame(body, fg_color=CARD, corner_radius=14)
+        right.grid(row=0, column=1, sticky="nsew")
+        self._build_right(right)
+
+    def _section(self, parent, label):
+        ctk.CTkLabel(
+            parent, text=label,
+            font=("Courier New", 11, "bold"), text_color=MUTED
+        ).pack(anchor="w", padx=18, pady=(18, 4))
+
+    def _build_left(self, frame):
+        ctk.CTkLabel(
+            frame, text="SETTINGS",
+            font=("Courier New", 15, "bold"), text_color=TEXT
+        ).pack(anchor="w", padx=18, pady=(18, 2))
+        ctk.CTkLabel(
+            frame, text="Configure your search",
+            font=("Courier New", 11), text_color=MUTED
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+
+        ctk.CTkFrame(frame, fg_color=CARD2, height=1).pack(fill="x", padx=18, pady=4)
+
+        # Length
+        self._section(frame, "USERNAME LENGTH")
+        self._len_var = IntVar(value=5)
+        len_row = ctk.CTkFrame(frame, fg_color="transparent")
+        len_row.pack(fill="x", padx=18, pady=(0, 6))
+
+        for val, lbl in [(4, "4 Letters"), (5, "5 Letters")]:
+            ctk.CTkRadioButton(
+                len_row, text=lbl, variable=self._len_var, value=val,
+                font=("Courier New", 13), text_color=TEXT,
+                fg_color=ACCENT, hover_color=ACCENT_DARK,
+            ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkFrame(frame, fg_color=CARD2, height=1).pack(fill="x", padx=18, pady=8)
+
+        # Count
+        self._section(frame, "HOW MANY TO FIND")
+        self._count_var = IntVar(value=5)
+        count_row = ctk.CTkFrame(frame, fg_color="transparent")
+        count_row.pack(fill="x", padx=18)
+
+        self._count_label = ctk.CTkLabel(
+            count_row, text="5",
+            font=("Courier New", 28, "bold"), text_color=ACCENT
+        )
+        self._count_label.pack(side="left", padx=(0, 12))
+
+        self._count_slider = ctk.CTkSlider(
+            count_row, from_=1, to=20, number_of_steps=19,
+            variable=self._count_var,
+            fg_color=CARD2, progress_color=ACCENT,
+            button_color=ACCENT, button_hover_color=ACCENT_DARK,
+            command=self._on_slider,
+        )
+        self._count_slider.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkFrame(frame, fg_color=CARD2, height=1).pack(fill="x", padx=18, pady=12)
+
+        # Delay
+        self._section(frame, "REQUEST DELAY (seconds)")
+        self._delay_var = StringVar(value="0.6")
+        ctk.CTkEntry(
+            frame, textvariable=self._delay_var,
+            font=("Courier New", 13), fg_color=CARD2,
+            border_color=CARD2, text_color=TEXT, width=80
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+
+        ctk.CTkFrame(frame, fg_color=CARD2, height=1).pack(fill="x", padx=18, pady=4)
+
+        # Stats
+        self._section(frame, "SESSION STATS")
+        stats_grid = ctk.CTkFrame(frame, fg_color=CARD2, corner_radius=10)
+        stats_grid.pack(fill="x", padx=18, pady=(4, 18))
+
+        self._stat_attempts = self._stat_tile(stats_grid, "ATTEMPTS", "0", 0)
+        self._stat_found    = self._stat_tile(stats_grid, "FOUND",    "0", 1)
+
+        # Buttons
+        self._start_btn = ctk.CTkButton(
+            frame, text="▶  START SEARCH",
+            font=("Courier New", 14, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_DARK,
+            text_color="white", corner_radius=10, height=44,
+            command=self._toggle,
+        )
+        self._start_btn.pack(fill="x", padx=18, pady=(4, 6))
+
+        ctk.CTkButton(
+            frame, text="⟳  CLEAR RESULTS",
+            font=("Courier New", 13),
+            fg_color=CARD2, hover_color="#2A2A2A",
+            text_color=MUTED, corner_radius=10, height=36,
+            command=self._clear,
+        ).pack(fill="x", padx=18, pady=(0, 18))
+
+    def _stat_tile(self, parent, label, val, col):
+        tile = ctk.CTkFrame(parent, fg_color="transparent")
+        tile.grid(row=0, column=col, padx=12, pady=10, sticky="ew")
+        parent.columnconfigure(col, weight=1)
+        v = ctk.CTkLabel(tile, text=val,
+                         font=("Courier New", 26, "bold"), text_color=ACCENT)
+        v.pack()
+        ctk.CTkLabel(tile, text=label,
+                     font=("Courier New", 9), text_color=MUTED).pack()
+        return v
+
+    def _build_right(self, frame):
+        top = ctk.CTkFrame(frame, fg_color="transparent")
+        top.pack(fill="x", padx=18, pady=(18, 8))
+
+        ctk.CTkLabel(
+            top, text="LIVE LOG",
+            font=("Courier New", 15, "bold"), text_color=TEXT
+        ).pack(side="left")
+
+        self._status_dot = ctk.CTkLabel(
+            top, text="●  IDLE",
+            font=("Courier New", 11), text_color=MUTED
+        )
+        self._status_dot.pack(side="right")
+
+        self._log = ctk.CTkTextbox(
+            frame, font=("Courier New", 12),
+            fg_color=CARD2, text_color="#AAAAAA",
+            corner_radius=10, activate_scrollbars=True,
+            wrap="word", state="disabled", height=260,
+        )
+        self._log.pack(fill="x", padx=18)
+
+        ctk.CTkFrame(frame, fg_color=CARD2, height=1).pack(fill="x", padx=18, pady=14)
+
+        ctk.CTkLabel(
+            frame, text="AVAILABLE USERNAMES",
+            font=("Courier New", 15, "bold"), text_color=TEXT
+        ).pack(anchor="w", padx=18)
+
+        self._results_frame = ctk.CTkScrollableFrame(
+            frame, fg_color=CARD2, corner_radius=10,
+            scrollbar_button_color=CARD,
+            scrollbar_button_hover_color=ACCENT,
+        )
+        self._results_frame.pack(fill="both", expand=True, padx=18, pady=(8, 18))
+
+        self._empty_label = ctk.CTkLabel(
+            self._results_frame,
+            text="No usernames found yet.\nStart a search to begin.",
+            font=("Courier New", 12), text_color=MUTED
+        )
+        self._empty_label.pack(pady=20)
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+    def _on_slider(self, val):
+        self._count_label.configure(text=str(int(val)))
+
+    def _log_write(self, msg):
+        self._log.configure(state="normal")
+        self._log.insert("end", msg + "\n")
+        self._log.see("end")
+        self._log.configure(state="disabled")
+
+    def _add_result_card(self, username, length):
+        card = ctk.CTkFrame(self._results_frame, fg_color=CARD, corner_radius=8)
+        card.pack(fill="x", pady=4, padx=4)
+
+        # Left side — name + badge
+        left = ctk.CTkFrame(card, fg_color="transparent")
+        left.pack(side="left", padx=14, pady=8)
+
+        ctk.CTkLabel(
+            left, text=username,
+            font=("Courier New", 18, "bold"), text_color=GREEN
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkLabel(
+            left, text=f"{length}L",
+            font=("Courier New", 10, "bold"), text_color="white",
+            fg_color=ACCENT, corner_radius=4, padx=5, pady=1
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            card, text="COPY",
+            font=("Courier New", 11, "bold"),
+            fg_color=CARD2, hover_color=ACCENT, text_color=TEXT,
+            corner_radius=6, width=64, height=28,
+            command=lambda u=username: self._copy(u),
+        ).pack(side="right", padx=10)
+
+    def _copy(self, text):
+        try:
+            pyperclip.copy(text)
+        except Exception:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
+    def _clear(self):
+        if self._running:
+            return
+        self._found    = []
+        self._attempts = 0
+        self._log.configure(state="normal")
+        self._log.delete("1.0", "end")
+        self._log.configure(state="disabled")
+        for w in self._results_frame.winfo_children():
+            w.destroy()
+        self._empty_label = ctk.CTkLabel(
+            self._results_frame,
+            text="No usernames found yet.\nStart a search to begin.",
+            font=("Courier New", 12), text_color=MUTED
+        )
+        self._empty_label.pack(pady=20)
+        self._stat_attempts.configure(text="0")
+        self._stat_found.configure(text="0")
+
+    # ── Search Thread ──────────────────────────────────────────────────────
+    def _toggle(self):
+        if self._running:
+            self._running = False
+            self._start_btn.configure(text="▶  START SEARCH", fg_color=ACCENT)
+            self._status_dot.configure(text="●  STOPPED", text_color=YELLOW)
+        else:
+            self._running = True
+            self._start_btn.configure(text="■  STOP SEARCH", fg_color="#555555")
+            self._status_dot.configure(text="●  SCANNING", text_color=GREEN)
+            if self._empty_label:
+                self._empty_label.destroy()
+                self._empty_label = None
+            self._thread = threading.Thread(target=self._search, daemon=True)
+            self._thread.start()
+
+    def _search(self):
+        length = self._len_var.get()
+        goal   = self._count_var.get()
+        try:
+            delay = float(self._delay_var.get())
+        except ValueError:
+            delay = 0.6
+
+        self._log_write(f"[START] Looking for {goal}x {length}-letter usernames\n")
+
+        while self._running and len(self._found) < goal:
+            name = generate_username(length)
+            self._attempts += 1
+            self.after(0, self._stat_attempts.configure, {"text": str(self._attempts)})
+            self._log_write(f"  #{self._attempts:>4}  {name}  ...")
+
+            if check_username(name):
+                self._found.append(name)
+                self._log_write(f"         ✅  AVAILABLE → {name}")
+                self.after(0, self._add_result_card, name, length)
+                self.after(0, self._stat_found.configure, {"text": str(len(self._found))})
+
+                # 🔔 Windows notification
+                notify_found(name, length)
+
+            time.sleep(delay)
+
+        self._running = False
+        self.after(0, self._start_btn.configure,
+                   {"text": "▶  START SEARCH", "fg_color": ACCENT})
+
+        if len(self._found) >= goal:
+            self.after(0, self._status_dot.configure,
+                       {"text": "●  DONE", "text_color": GREEN})
+            self._log_write(f"\n[DONE] Found {len(self._found)} in {self._attempts} attempts.")
+        else:
+            self.after(0, self._status_dot.configure,
+                       {"text": "●  STOPPED", "text_color": YELLOW})
+
+# ── Run ────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    notify_if_script()
+    app = App()
+    app.mainloop()
