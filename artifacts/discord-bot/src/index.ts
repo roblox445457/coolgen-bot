@@ -14,6 +14,7 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   ComponentType,
+  AttachmentBuilder,
 } from "discord.js";
 import axios from "axios";
 import {
@@ -142,6 +143,8 @@ const ageGroupCooldowns = new Map<string, number>();
 const bulkGenCooldowns = new Map<string, number>();
 const bulkGenDumpCooldowns = new Map<string, number>();
 const bulkSnipeCooldowns = new Map<string, number>();
+// Tracks all sniped usernames per user
+const snipedAccounts = new Map<string, string[]>();
 // Tracks free-tier users who bulkgen'd using the status requirement
 const bulkGenStatusUsers = new Set<string>();
 
@@ -319,7 +322,7 @@ client.on("messageCreate", async (message: Message) => {
     "addstock","addpremiumstock","addgodstock","addagegroupaccounts","addrarestock","addmultistock",
     "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","allstocks",
     "lockstock","unlockstock","lockallstocks","unlockallstocks",
-    "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","setcooldown","help","fakestock","generatedumpexportaccounts",
+    "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","allsnipedaccs","setcooldown","help","fakestock","generatedumpexportaccounts",
   ]);
 
   const lowerContent = message.content.toLowerCase().trim();
@@ -416,6 +419,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleSnipe(message);
   } else if (command === "bulksnipe") {
     await handleBulkSnipe(message);
+  } else if (command === "allsnipedaccs") {
+    await handleAllSnipedAccs(message);
   } else if (command === "setcooldown") {
     await handleSetCooldown(message, args[1], args[2]);
   } else if (command === "fakestock") {
@@ -2439,6 +2444,10 @@ async function handleSnipe(message: Message) {
     log.push(available ? `✅ ${username} — AVAILABLE!` : `❌ ${username}`);
 
     if (available) {
+      const existing = snipedAccounts.get(message.author.id) ?? [];
+      existing.push(username);
+      snipedAccounts.set(message.author.id, existing);
+
       await scanning.edit({
         embeds: [
           new EmbedBuilder()
@@ -2574,6 +2583,9 @@ async function handleBulkSnipe(message: Message) {
 
       if (available) {
         found.push(username);
+        const existing = snipedAccounts.get(message.author.id) ?? [];
+        existing.push(username);
+        snipedAccounts.set(message.author.id, existing);
         foundOne = true;
         await scanning.edit({ embeds: [buildEmbed()] }).catch(() => null);
         break;
@@ -2626,6 +2638,67 @@ async function handleBulkSnipe(message: Message) {
     await message.channel.send({
       content: `${message.author} — DMs are closed! Sniped usernames: ${list} — sign up at https://www.roblox.com/`,
       flags: [4096],
+    });
+  }
+}
+
+async function handleAllSnipedAccs(message: Message) {
+  const accs = snipedAccounts.get(message.author.id);
+
+  if (!accs || accs.length === 0) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("🎯 No Sniped Usernames")
+          .setDescription("You haven't sniped any usernames yet this session. Use `j!snipe` or `j!bulksnipe` to find some!"),
+      ],
+    });
+    return;
+  }
+
+  const lines: string[] = [
+    `CoolGEN — Sniped Usernames`,
+    `Total: ${accs.length}`,
+    `Generated: ${new Date().toUTCString()}`,
+    ``,
+    ...accs.map((u, i) => `${i + 1}. ${u}`),
+  ];
+  const fileContent = lines.join("\n");
+  const attachment = new AttachmentBuilder(Buffer.from(fileContent, "utf-8"), {
+    name: "sniped-usernames.txt",
+  });
+
+  try {
+    await message.author.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle("🎯 Your Sniped Usernames")
+          .setDescription(`Here are all **${accs.length}** username(s) you've sniped this session.\n\nSign up at: https://www.roblox.com/`)
+          .addFields({ name: "Total Sniped", value: `\`${accs.length}\``, inline: true })
+          .setFooter({ text: "CoolGEN Sniper" })
+          .setTimestamp(),
+      ],
+      files: [attachment],
+    });
+
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setTitle("✅ Sent to DMs")
+          .setDescription(`Your **${accs.length}** sniped username(s) have been sent to your DMs as a \`.txt\` file!`),
+      ],
+    });
+  } catch {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ DMs Closed")
+          .setDescription("Your DMs are closed — please open them and try again."),
+      ],
     });
   }
 }
