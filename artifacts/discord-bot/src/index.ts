@@ -15,6 +15,7 @@ import {
   StringSelectMenuOptionBuilder,
   ComponentType,
   AttachmentBuilder,
+  User,
 } from "discord.js";
 import axios from "axios";
 import {
@@ -180,13 +181,269 @@ interface PendingCaptcha {
   account: Account;
   tier: "free" | "premium" | "god" | "agegroup" | "rare" | "dump";
   correctColor: string;
-  originalMessage: Message;
+  originalMessage: Message | null;
   timeoutHandle: ReturnType<typeof setTimeout>;
+  panelCtx?: { channelId: string; userId: string };
 }
 const pendingCaptchas = new Map<string, PendingCaptcha>();
 
 // Home guild is resolved at startup from the stock channel
 let HOME_GUILD_ID: string | null = null;
+
+// ── Panel ─────────────────────────────────────────────────────────────────
+const PANEL_CHANNEL_ID = "1506428139172003980";
+let panelMessageId: string | null = null;
+
+// ── Leaderboard: userId → { tag, count } ─────────────────────────────────
+const leaderboard = new Map<string, { tag: string; count: number }>();
+
+// ── Restock alert subscribers ─────────────────────────────────────────────
+const restockSubscribers = new Set<string>();
+
+// ── Cooldown-done notification opt-ins ────────────────────────────────────
+const cdNotifyUsers = new Set<string>();
+
+// ── Panel helpers ─────────────────────────────────────────────────────────
+
+function buildPanelEmbed(): EmbedBuilder {
+  const free     = fakeAmount("free")     ?? stockCount();
+  const premium  = fakeAmount("premium")  ?? premiumStockCount();
+  const god      = fakeAmount("god")      ?? godStockCount();
+  const ageGroup = fakeAmount("agegroup") ?? ageGroupStockCount();
+  const rare     = fakeAmount("rare")     ?? rareStockCount();
+  const dump     = fakeAmount("dump")     ?? dumpStockCount();
+  const total    = free + premium + god + ageGroup + rare + dump;
+
+  const bar = (n: number) =>
+    "█".repeat(Math.min(n, 10)) + "░".repeat(Math.max(0, 10 - Math.min(n, 10))) + ` \`${n}\``;
+
+  return new EmbedBuilder()
+    .setTitle("🎮 CoolGEN — Generator Panel")
+    .setColor(0xe8192c)
+    .setDescription("Use the buttons below to generate accounts, check stock, view the leaderboard, or manage your notifications.")
+    .addFields(
+      { name: "🟢 Free",        value: bar(free),     inline: true },
+      { name: "⭐ Premium",     value: bar(premium),  inline: true },
+      { name: "🌟 God",         value: bar(god),      inline: true },
+      { name: "🎂 Age Group",   value: bar(ageGroup), inline: true },
+      { name: "💎 Rare",        value: bar(rare),     inline: true },
+      { name: "🗑️ Dump",        value: bar(dump),     inline: true },
+      { name: "📊 Total Stock", value: `\`${total} account(s)\``, inline: false },
+    )
+    .setFooter({ text: `CoolGEN · ${new Date().toUTCString()}` })
+    .setTimestamp();
+}
+
+function buildPanelRows(): ActionRowBuilder<ButtonBuilder>[] {
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("panel_generate").setLabel("Generate").setEmoji("🎮").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("panel_stock").setLabel("Stock").setEmoji("📊").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("panel_leaderboard").setLabel("Leaderboard").setEmoji("🏆").setStyle(ButtonStyle.Primary),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("panel_restock").setLabel("Restock Alerts").setEmoji("🔔").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("panel_cdnotify").setLabel("CD Notify").setEmoji("⏰").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("panel_help").setLabel("Help").setEmoji("❓").setStyle(ButtonStyle.Secondary),
+  );
+  return [row1, row2];
+}
+
+async function postOrUpdatePanel(botClient: Client) {
+  try {
+    const ch = await botClient.channels.fetch(PANEL_CHANNEL_ID) as TextChannel | null;
+    if (!ch) return;
+    const embed = buildPanelEmbed();
+    const rows  = buildPanelRows();
+    if (panelMessageId) {
+      const existing = await ch.messages.fetch(panelMessageId).catch(() => null);
+      if (existing) {
+        await existing.edit({ embeds: [embed], components: rows });
+        return;
+      }
+    }
+    const msg = await ch.send({ embeds: [embed], components: rows });
+    panelMessageId = msg.id;
+  } catch {
+    // Channel not accessible — silently ignore
+  }
+}
+
+async function notifyRestock(tier: StockTier, count: number) {
+  if (restockSubscribers.size === 0) {
+    await postOrUpdatePanel(client).catch(() => null);
+    return;
+  }
+  const tierLabel =
+    tier === "god"      ? "🌟 God"
+    : tier === "premium"  ? "⭐ Premium"
+    : tier === "agegroup" ? "🎂 Age Group"
+    : tier === "rare"     ? "💎 Rare"
+    : tier === "dump"     ? "🗑️ Dump"
+    : "🟢 Free";
+  const embed = new EmbedBuilder()
+    .setColor(0x00c851)
+    .setTitle("🔔 Restock Alert!")
+    .setDescription(`**${count}** account(s) were added to **${tierLabel}** stock!\nHead over and generate before it runs out!`)
+    .setFooter({ text: "CoolGEN Restock Alerts" })
+    .setTimestamp();
+  for (const uid of restockSubscribers) {
+    try {
+      const u = await client.users.fetch(uid);
+      await u.send({ embeds: [embed] });
+    } catch { /* DMs closed */ }
+  }
+  await postOrUpdatePanel(client).catch(() => null);
+}
+
+function scheduleCdNotify(userId: string, cooldownMs: number, user: User) {
+  setTimeout(async () => {
+    if (!cdNotifyUsers.has(userId)) return;
+    try {
+      await user.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x00c851)
+            .setTitle("⏰ Cooldown Ready!")
+            .setDescription("Your generate cooldown has expired — you can generate again!\n\nUse `j!generate` or click **🎮 Generate** in the panel.")
+            .setFooter({ text: "CoolGEN CD Notifications" })
+            .setTimestamp(),
+        ],
+      });
+    } catch { /* DMs closed */ }
+  }, cooldownMs);
+}
+
+async function sendCaptchaFromPanel(channel: TextChannel, user: User, account: Account, tier: StockTier) {
+  const correct = CAPTCHA_COLORS[Math.floor(Math.random() * CAPTCHA_COLORS.length)];
+
+  const captchaMsg = await channel.send({
+    content: `${user}`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("🛡️ Human Verification")
+        .setDescription(
+          `${user}, click the **${correct.emoji} ${correct.label}** button below.\n\n⏰ You have **30 seconds** to respond.`
+        )
+        .setFooter({ text: "Wrong answer or timeout returns the account to stock." }),
+    ],
+    components: [captchaRow()],
+  });
+
+  const timeoutHandle = setTimeout(async () => {
+    if (!pendingCaptchas.has(user.id)) return;
+    pendingCaptchas.delete(user.id);
+    returnPendingToStock({ account, tier });
+    await captchaMsg
+      .edit({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("⏰ Verification Timed Out")
+            .setDescription("You didn't respond in time. The account was returned to stock."),
+        ],
+        components: [],
+      })
+      .catch(() => null);
+    setTimeout(() => captchaMsg.delete().catch(() => null), 5_000);
+  }, 30_000);
+
+  pendingCaptchas.set(user.id, {
+    account,
+    tier,
+    correctColor: correct.id,
+    originalMessage: null,
+    panelCtx: { channelId: channel.id, userId: user.id },
+    timeoutHandle,
+  });
+}
+
+async function deliverAccountFromPanelCtx(account: Account, tier: StockTier, channelId: string, userId: string) {
+  const user = await client.users.fetch(userId).catch(() => null);
+  if (!user) return;
+  const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
+  if (!channel) return;
+
+  const profile = await getRobloxProfile(account.username);
+  const fmt = (n: number | null) => (n !== null ? n.toLocaleString() : "N/A");
+  const createdStr = profile?.createdAt
+    ? profile.createdAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "N/A";
+  const ageDaysStr = profile?.ageDays != null ? `${profile.ageDays.toLocaleString()} days` : "N/A";
+  const profileUrl = profile ? `https://www.roblox.com/users/${profile.userId}/profile` : null;
+
+  const tierLabel =
+    tier === "god"      ? "🌟 Your God-Tier Roblox Account"
+    : tier === "premium"  ? "⭐ Your Premium Roblox Account"
+    : tier === "agegroup" ? "🎂 Your Age Group Roblox Account"
+    : tier === "rare"     ? "💎 Your Rare Username Roblox Account"
+    : tier === "dump"     ? "🗑️ Your Dump Roblox Account"
+    : "🎮 Your Roblox Account";
+  const color =
+    tier === "god"      ? 0x9b59b6
+    : tier === "premium"  ? 0xf5a623
+    : tier === "agegroup" ? 0x00bcd4
+    : tier === "rare"     ? 0xffd700
+    : tier === "dump"     ? 0xe74c3c
+    : 0x00c851;
+
+  const dmEmbed = new EmbedBuilder()
+    .setTitle(tierLabel)
+    .setColor(color)
+    .addFields(
+      { name: "👤 Username",      value: `\`${account.username}\``,                         inline: true },
+      { name: "🏷️ Display Name", value: `\`${profile?.displayName ?? account.username}\``, inline: true },
+      { name: "🆔 User ID",       value: `\`${profile?.userId ?? "N/A"}\``,                 inline: true },
+      { name: "🔑 Password",      value: `\`${account.password}\``,                         inline: true },
+      { name: "📅 Created",       value: `\`${createdStr}\``,                               inline: true },
+      { name: "⏳ Account Age",   value: `\`${ageDaysStr}\``,                               inline: true },
+      { name: "👫 Friends",       value: `\`${fmt(profile?.friends ?? null)}\``,            inline: true },
+      { name: "👥 Followers",     value: `\`${fmt(profile?.followers ?? null)}\``,          inline: true },
+      { name: "➡️ Following",     value: `\`${fmt(profile?.following ?? null)}\``,          inline: true },
+    )
+    .setFooter({ text: "CoolGEN Panel — Login at roblox.com" })
+    .setTimestamp();
+
+  if (profile?.avatarUrl) dmEmbed.setThumbnail(profile.avatarUrl);
+  if (profileUrl) dmEmbed.setURL(profileUrl);
+
+  const cooldownMs = tier === "agegroup" ? AGE_GROUP_COOLDOWN_MS : GENERATE_COOLDOWN_MS;
+  if (tier === "agegroup") ageGroupCooldowns.set(userId, Date.now());
+  else generateCooldowns.set(userId, Date.now());
+  const cdEnd = Math.floor((Date.now() + cooldownMs) / 1000);
+
+  // Track leaderboard
+  const lbEntry = leaderboard.get(userId) ?? { tag: user.username, count: 0 };
+  lbEntry.count++;
+  lbEntry.tag = user.username;
+  leaderboard.set(userId, lbEntry);
+
+  // Schedule CD done notification
+  if (cdNotifyUsers.has(userId)) scheduleCdNotify(userId, cooldownMs, user);
+
+  try {
+    await user.send({ embeds: [dmEmbed] });
+    const cookieLine = account.cookie
+      ? `🍪 **.ROBLOSECURITY Cookie:**\n\`\`\`${account.cookie}\`\`\``
+      : `⛔ **NO .ROBLOXSECURITY FOR THIS STOCK**`;
+    await user.send(`${cookieLine}\n\n**Combo** \`${account.username}:${account.password}\`\n\n⚠️ **Warning: Change the Password**`);
+
+    const channelEmbed = new EmbedBuilder()
+      .setColor(color)
+      .setTitle("✅ Account Generated")
+      .setDescription(`${user} — Check your DMs for your account!\n⏳ Next generate: <t:${cdEnd}:R>`)
+      .setFooter({ text: "CoolGEN Panel" })
+      .setTimestamp();
+    if (profile?.avatarUrl) channelEmbed.setThumbnail(profile.avatarUrl);
+    await channel.send({ embeds: [channelEmbed] });
+  } catch {
+    pendingAccounts.set(userId, { account, tier });
+    await channel.send({ content: `${user}`, embeds: [dmOffEmbed()], components: [dmOffRow()] });
+  }
+
+  await postStockWebhook(account.username, tier, profile?.avatarUrl ?? null, user);
+  await postOrUpdatePanel(client).catch(() => null);
+}
 
 client.once("clientReady", async (c) => {
   console.log(`Bot is online as ${c.user.tag}`);
@@ -210,6 +467,9 @@ client.once("clientReady", async (c) => {
       await guild.leave().catch(() => null);
     }
   }
+
+  // Post the generator panel
+  await postOrUpdatePanel(c).catch(() => null);
 });
 
 // Auto-leave any server the bot gets invited to that isn't home
@@ -600,7 +860,11 @@ client.on("interactionCreate", async (interaction: Interaction) => {
 
       if (id === pending.correctColor) {
         await interaction.deferUpdate().catch(() => null);
-        await deliverAccount(pending.account, pending.tier, pending.originalMessage);
+        if (pending.panelCtx) {
+          await deliverAccountFromPanelCtx(pending.account, pending.tier, pending.panelCtx.channelId, pending.panelCtx.userId);
+        } else {
+          await deliverAccount(pending.account, pending.tier, pending.originalMessage!);
+        }
       } else {
         if (pending.tier === "god") addGodAccount(pending.account);
         else if (pending.tier === "premium") addPremiumAccount(pending.account);
@@ -681,6 +945,93 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         .setRequired(true);
       modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
       await interaction.showModal(modal);
+
+    } else if (id === "panel_generate") {
+      const member = await interaction.guild?.members.fetch(userId).catch(() => null);
+      const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+      const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("panel_tier_select")
+        .setPlaceholder("🎮 Choose a tier to generate from...")
+        .addOptions(
+          new StringSelectMenuOptionBuilder().setLabel("🟢 Free").setValue("free").setDescription("Standard free account"),
+          new StringSelectMenuOptionBuilder().setLabel("⭐ Premium").setValue("premium").setDescription(hasPremium || hasGod ? "Premium tier account" : "Requires Premium role"),
+          new StringSelectMenuOptionBuilder().setLabel("🌟 God").setValue("god").setDescription(hasGod ? "God tier account" : "Requires God role"),
+          new StringSelectMenuOptionBuilder().setLabel("🎂 Age Group").setValue("agegroup").setDescription("Age group account"),
+          new StringSelectMenuOptionBuilder().setLabel("💎 Rare").setValue("rare").setDescription("Rare username account"),
+          new StringSelectMenuOptionBuilder().setLabel("🗑️ Dump").setValue("dump").setDescription("Dump tier account"),
+        );
+      await interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0xe8192c).setTitle("🎮 Generate — Select Tier").setDescription("Pick which tier you want to generate from:")],
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+        ephemeral: true,
+      });
+
+    } else if (id === "panel_stock") {
+      const free     = fakeAmount("free")     ?? stockCount();
+      const premium  = fakeAmount("premium")  ?? premiumStockCount();
+      const god      = fakeAmount("god")      ?? godStockCount();
+      const ageGroup = fakeAmount("agegroup") ?? ageGroupStockCount();
+      const rare     = fakeAmount("rare")     ?? rareStockCount();
+      const dump     = fakeAmount("dump")     ?? dumpStockCount();
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setTitle("📊 Live Stock Counts")
+            .addFields(
+              { name: "🟢 Free",      value: `\`${free}\``,     inline: true },
+              { name: "⭐ Premium",   value: `\`${premium}\``,  inline: true },
+              { name: "🌟 God",       value: `\`${god}\``,      inline: true },
+              { name: "🎂 Age Group", value: `\`${ageGroup}\``, inline: true },
+              { name: "💎 Rare",      value: `\`${rare}\``,     inline: true },
+              { name: "🗑️ Dump",      value: `\`${dump}\``,     inline: true },
+              { name: "📦 Total",     value: `\`${free + premium + god + ageGroup + rare + dump}\``, inline: false },
+            )
+            .setTimestamp(),
+        ],
+        ephemeral: true,
+      });
+
+    } else if (id === "panel_leaderboard") {
+      const entries = [...leaderboard.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 10);
+      if (entries.length === 0) {
+        await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xffd700).setTitle("🏆 Leaderboard").setDescription("No generates recorded yet — be the first!")], ephemeral: true });
+        return;
+      }
+      const desc = entries.map(([, { tag, count }], i) => `**${i + 1}.** ${tag} — \`${count}\` generate(s)`).join("\n");
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xffd700)
+            .setTitle("🏆 Generate Leaderboard — Top 10")
+            .setDescription(desc)
+            .setFooter({ text: "Resets when bot restarts" })
+            .setTimestamp(),
+        ],
+        ephemeral: true,
+      });
+
+    } else if (id === "panel_restock") {
+      if (restockSubscribers.has(userId)) {
+        restockSubscribers.delete(userId);
+        await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("🔕 **Restock Alerts OFF** — You won't be DM'd when stock is added.")], ephemeral: true });
+      } else {
+        restockSubscribers.add(userId);
+        await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x00c851).setDescription("🔔 **Restock Alerts ON** — You'll get a DM whenever stock is added!")], ephemeral: true });
+      }
+
+    } else if (id === "panel_cdnotify") {
+      if (cdNotifyUsers.has(userId)) {
+        cdNotifyUsers.delete(userId);
+        await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("🔕 **CD Notifications OFF** — You won't be DM'd when your cooldown expires.")], ephemeral: true });
+      } else {
+        cdNotifyUsers.add(userId);
+        await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x00c851).setDescription("⏰ **CD Notifications ON** — You'll get a DM when your generate cooldown is ready!")], ephemeral: true });
+      }
+
+    } else if (id === "panel_help") {
+      await interaction.reply({ embeds: [buildHelpTabEmbed("generate")], ephemeral: true });
     }
 
   } else if (interaction.isStringSelectMenu()) {
@@ -688,6 +1039,55 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const tab = interaction.values[0];
       const embed = buildHelpTabEmbed(tab);
       await interaction.update({ embeds: [embed] });
+
+    } else if (interaction.customId === "panel_tier_select") {
+      const tier    = interaction.values[0] as StockTier;
+      const userId  = interaction.user.id;
+      const member  = await interaction.guild?.members.fetch(userId).catch(() => null);
+      const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+      const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+
+      if (tier === "god" && !hasGod) {
+        await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You need the **God** role to generate from God tier.")], components: [] });
+        return;
+      }
+      if (tier === "premium" && !hasPremium && !hasGod) {
+        await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You need the **Premium** role to generate from Premium tier.")], components: [] });
+        return;
+      }
+      if (lockedStocks.has(tier)) {
+        await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription(`${tier} stock is currently locked.`)], components: [] });
+        return;
+      }
+
+      const lastCd = tier === "agegroup" ? ageGroupCooldowns.get(userId) : generateCooldowns.get(userId);
+      if (lastCd) {
+        const cdMs = tier === "agegroup" ? AGE_GROUP_COOLDOWN_MS : GENERATE_COOLDOWN_MS;
+        const remaining = cdMs - (Date.now() - lastCd);
+        if (remaining > 0) {
+          const mins = Math.floor(remaining / 60000);
+          const secs = Math.ceil((remaining % 60000) / 1000);
+          await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("⏳ Cooldown Active").setDescription(`Wait **${mins}m ${secs}s** before generating again.`)], components: [] });
+          return;
+        }
+      }
+
+      const stockFn =
+        tier === "god"      ? popGodAccount
+        : tier === "premium"  ? popPremiumAccount
+        : tier === "agegroup" ? popAgeGroupAccount
+        : tier === "rare"     ? popRareAccount
+        : tier === "dump"     ? popDumpAccount
+        : popAccount;
+      const account = stockFn();
+      if (!account) {
+        await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("❌ Out of Stock").setDescription(`No **${tier}** accounts in stock right now.`)], components: [] });
+        return;
+      }
+
+      await interaction.update({ embeds: [new EmbedBuilder().setColor(0x00c851).setDescription("✅ Captcha sent in the channel! Complete it to receive your account.")], components: [] });
+      const channel = interaction.channel as TextChannel;
+      await sendCaptchaFromPanel(channel, interaction.user, account, tier);
 
     } else if (interaction.customId === "multistock_tier") {
       const userId = interaction.user.id;
@@ -753,6 +1153,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         .setTimestamp();
 
       await interaction.update({ embeds: [embed], components: [] });
+      if (added > 0) await notifyRestock(tier, added);
     }
 
   } else if (interaction.isModalSubmit()) {
@@ -1074,6 +1475,15 @@ async function deliverAccount(
   else generateCooldowns.set(message.author.id, Date.now());
   const cdEnd = Math.floor((Date.now() + cooldownMs) / 1000);
 
+  // Track leaderboard
+  const lbEntry = leaderboard.get(message.author.id) ?? { tag: message.author.username, count: 0 };
+  lbEntry.count++;
+  lbEntry.tag = message.author.username;
+  leaderboard.set(message.author.id, lbEntry);
+
+  // Schedule CD done notification
+  if (cdNotifyUsers.has(message.author.id)) scheduleCdNotify(message.author.id, cooldownMs, message.author);
+
   // Determine CoolGEN tier badge for the channel reply
   let member = message.member;
   if (!member && message.guild) {
@@ -1316,6 +1726,7 @@ async function handleSessionReply(message: Message) {
     } else {
       addAccount(account);
     }
+    await notifyRestock(tier as StockTier, 1);
 
     const count =
       tier === "god" ? godStockCount()
@@ -2484,7 +2895,7 @@ async function handleSnipe(message: Message) {
           ],
         });
       } catch {
-        await message.channel.send({
+        await (message.channel as TextChannel).send({
           content: `${message.author} — DMs are closed! Sniped username: \`${username}\` — sign up at https://www.roblox.com/ fast!`,
           flags: [4096],
         });
@@ -2635,7 +3046,7 @@ async function handleBulkSnipe(message: Message) {
     }
   } catch {
     const list = found.map(u => `\`${u}\``).join(", ");
-    await message.channel.send({
+    await (message.channel as TextChannel).send({
       content: `${message.author} — DMs are closed! Sniped usernames: ${list} — sign up at https://www.roblox.com/`,
       flags: [4096],
     });
