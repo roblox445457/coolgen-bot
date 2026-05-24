@@ -4,5 +4,9 @@
   "cdNotifyUsers": [
     "1230660770749087796"
   ],
-  "whitelistedUsers": []
+  "whitelistedUsers": [
+    "775560051112149032"
+  ],
+  "blacklistedUsers": [],
+  "cdSkipUsage": {}
 }

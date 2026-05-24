@@ -148,8 +148,12 @@ const bulkGenCooldowns = new Map<string, number>();
 const bulkGenDumpCooldowns = new Map<string, number>();
 const bulkSnipeCooldowns = new Map<string, number>();
 
-// Whitelist — users who bypass all cooldowns
+// Whitelist — users who bypass all cooldowns AND can use admin commands
 const whitelistedUsers = new Set<string>();
+
+function isAdmin(userId: string): boolean {
+  return userId === STOCK_ALLOWED_USER_ID || whitelistedUsers.has(userId);
+}
 
 // Blacklist — users banned from all generate commands
 const blacklistedUsers = new Set<string>();
@@ -1791,7 +1795,7 @@ async function handleFakeStock(
   amountArg: string | undefined,
   tierArg: string | undefined,
 ) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
@@ -1903,7 +1907,7 @@ async function handleGenerate(message: Message) {
 }
 
 async function handleAddStock(message: Message, tier: "free" | "premium" | "god") {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -2082,7 +2086,7 @@ async function handleAllStock(message: Message) {
 }
 
 async function handleLockStock(message: Message, tierArg: string, lock: boolean) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
@@ -2121,7 +2125,7 @@ async function handleLockStock(message: Message, tierArg: string, lock: boolean)
 }
 
 async function handleLockAllStocks(message: Message, lock: boolean) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
@@ -2155,7 +2159,7 @@ async function handleAgeGroupStockCount(message: Message) {
 }
 
 async function handleAddAgeGroupStock(message: Message) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -2243,7 +2247,7 @@ async function handleDumpStockCount(message: Message) {
 }
 
 async function handleAddRareStock(message: Message) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
@@ -2463,7 +2467,7 @@ async function handleShowApiPanel(message: Message) {
 }
 
 async function handleAddApiKeys(message: Message, keys: string[]) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [
         new EmbedBuilder()
@@ -3424,7 +3428,7 @@ async function handleCooldownCheck(message: Message) {
 }
 
 async function handleWhitelist(message: Message, subArg: string | undefined, targetArg: string | undefined) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
     return;
   }
@@ -3494,7 +3498,7 @@ async function handleWhitelist(message: Message, subArg: string | undefined, tar
 }
 
 async function handleAnnounce(message: Message, args: string[]) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
     return;
   }
@@ -3518,7 +3522,7 @@ async function handleAnnounce(message: Message, args: string[]) {
 }
 
 async function handleClearCd(message: Message, targetArg: string | undefined) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
     return;
   }
@@ -3546,7 +3550,7 @@ async function handleClearCd(message: Message, targetArg: string | undefined) {
 }
 
 async function handleBlacklist(message: Message, subArg: string | undefined, targetArg: string | undefined) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
     return;
   }
@@ -3615,7 +3619,7 @@ async function handleBlacklist(message: Message, subArg: string | undefined, tar
 }
 
 async function handleStockLog(message: Message) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
     return;
   }
@@ -3662,7 +3666,7 @@ async function handleStockLog(message: Message) {
 }
 
 async function handleSetCooldown(message: Message, tierArg: string | undefined, minutesArg: string | undefined) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
@@ -3876,7 +3880,7 @@ async function handleHelp(message: Message) {
 }
 
 async function handleAddMultiStock(message: Message, _args: string[]) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
@@ -3988,7 +3992,7 @@ async function handleGenerateDump(message: Message, _unused?: string) {
 }
 
 async function handleExportAccounts(message: Message, tierArg: string | undefined) {
-  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+  if (!isAdmin(message.author.id)) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
     });
