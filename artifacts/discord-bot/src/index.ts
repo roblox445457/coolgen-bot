@@ -16,8 +16,11 @@ import {
   ComponentType,
   AttachmentBuilder,
   User,
+  ButtonInteraction,
+  MessageComponentInteraction,
 } from "discord.js";
 import axios from "axios";
+import * as fs from "fs";
 import {
   Account,
   addAccount, popAccount, stockCount,
@@ -144,6 +147,85 @@ const ageGroupCooldowns = new Map<string, number>();
 const bulkGenCooldowns = new Map<string, number>();
 const bulkGenDumpCooldowns = new Map<string, number>();
 const bulkSnipeCooldowns = new Map<string, number>();
+
+// Skip Daily Cooldown — tracks how many times each user has skipped today
+const cdSkipUsage = new Map<string, { date: string; count: number }>();
+
+function getSkipsUsed(userId: string): number {
+  const today = new Date().toDateString();
+  const entry = cdSkipUsage.get(userId);
+  if (!entry || entry.date !== today) return 0;
+  return entry.count;
+}
+
+function getSkipLimit(hasGod: boolean, hasPremium: boolean): number {
+  if (hasGod) return 5;
+  if (hasPremium) return 3;
+  return 2;
+}
+
+function useSkip(userId: string): void {
+  const today = new Date().toDateString();
+  const entry = cdSkipUsage.get(userId);
+  if (!entry || entry.date !== today) {
+    cdSkipUsage.set(userId, { date: today, count: 1 });
+  } else {
+    entry.count++;
+  }
+}
+
+function buildCooldownWithSkipEmbed(remaining: number, skipsUsed: number, skipLimit: number): EmbedBuilder {
+  const mins = Math.floor(remaining / 60000);
+  const secs = Math.ceil((remaining % 60000) / 1000);
+  const skipsLeft = Math.max(0, skipLimit - skipsUsed);
+  return new EmbedBuilder()
+    .setColor(0xff4444)
+    .setTitle("⏳ Cooldown Active")
+    .setDescription(
+      `You must wait **${mins}m ${secs}s** before generating again.\n\n` +
+      `⚡ **Skip Daily Cooldown:** \`${skipsLeft}/${skipLimit}\` skip(s) left today`
+    );
+}
+
+function buildSkipRow(skipsLeft: number, cdType: string): ActionRowBuilder<ButtonBuilder> {
+  let customId: string;
+  if (cdType === "main") customId = "skip_cooldown_main";
+  else if (cdType === "ag") customId = "skip_cooldown_ag";
+  else customId = `skip_panel_cd:${cdType.replace("panel:", "")}`;
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(customId)
+      .setLabel(`⚡ Skip Daily Cooldown`)
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(skipsLeft <= 0)
+  );
+}
+
+async function replyCooldownMsg(message: Message, remaining: number): Promise<void> {
+  const member = message.member ?? await message.guild?.members.fetch(message.author.id).catch(() => null);
+  const hasGod2 = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+  const hasPremium2 = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+  const skipsUsed = getSkipsUsed(message.author.id);
+  const skipLimit = getSkipLimit(hasGod2, hasPremium2);
+  const skipsLeft = Math.max(0, skipLimit - skipsUsed);
+  await message.reply({
+    embeds: [buildCooldownWithSkipEmbed(remaining, skipsUsed, skipLimit)],
+    components: [buildSkipRow(skipsLeft, "main")],
+  });
+}
+
+async function replyAgCooldownMsg(message: Message, remaining: number): Promise<void> {
+  const member = message.member ?? await message.guild?.members.fetch(message.author.id).catch(() => null);
+  const hasGod2 = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+  const hasPremium2 = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+  const skipsUsed = getSkipsUsed(message.author.id);
+  const skipLimit = getSkipLimit(hasGod2, hasPremium2);
+  const skipsLeft = Math.max(0, skipLimit - skipsUsed);
+  await message.reply({
+    embeds: [buildCooldownWithSkipEmbed(remaining, skipsUsed, skipLimit)],
+    components: [buildSkipRow(skipsLeft, "ag")],
+  });
+}
 // Tracks all sniped usernames per user
 const snipedAccounts = new Map<string, string[]>();
 // Tracks free-tier users who bulkgen'd using the status requirement
@@ -197,6 +279,7 @@ interface PendingCaptcha {
   originalMessage: Message | null;
   timeoutHandle: ReturnType<typeof setTimeout>;
   panelCtx?: { channelId: string; userId: string };
+  panelInteraction?: MessageComponentInteraction;
 }
 const pendingCaptchas = new Map<string, PendingCaptcha>();
 
@@ -215,6 +298,34 @@ const restockSubscribers = new Set<string>();
 
 // ── Cooldown-done notification opt-ins ────────────────────────────────────
 const cdNotifyUsers = new Set<string>();
+
+// ── Panel data persistence ────────────────────────────────────────────────
+const PANEL_DATA_FILE = "panel-data.json";
+
+function loadPanelData(): void {
+  try {
+    const raw = fs.readFileSync(PANEL_DATA_FILE, "utf-8");
+    const data = JSON.parse(raw);
+    if (data.panelMessageId) panelMessageId = data.panelMessageId;
+    if (Array.isArray(data.restockSubscribers)) {
+      for (const id of data.restockSubscribers) restockSubscribers.add(id);
+    }
+    if (Array.isArray(data.cdNotifyUsers)) {
+      for (const id of data.cdNotifyUsers) cdNotifyUsers.add(id);
+    }
+  } catch { /* file doesn't exist yet, start fresh */ }
+}
+
+function savePanelData(): void {
+  try {
+    const data = {
+      panelMessageId,
+      restockSubscribers: [...restockSubscribers],
+      cdNotifyUsers: [...cdNotifyUsers],
+    };
+    fs.writeFileSync(PANEL_DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch { /* ignore write errors */ }
+}
 
 // ── Panel helpers ─────────────────────────────────────────────────────────
 
@@ -276,6 +387,7 @@ async function postOrUpdatePanel(botClient: Client) {
     }
     const msg = await ch.send({ embeds: [embed], components: rows });
     panelMessageId = msg.id;
+    savePanelData();
   } catch {
     // Channel not accessible — silently ignore
   }
@@ -326,7 +438,7 @@ function scheduleCdNotify(userId: string, cooldownMs: number, user: User) {
   }, cooldownMs);
 }
 
-async function sendCaptchaFromPanel(channel: TextChannel, user: User, account: Account, tier: StockTier) {
+async function sendCaptchaFromPanel(channel: TextChannel, user: User, account: Account, tier: StockTier, panelInteraction?: MessageComponentInteraction) {
   const correct = CAPTCHA_COLORS[Math.floor(Math.random() * CAPTCHA_COLORS.length)];
 
   const captchaMsg = await channel.send({
@@ -367,11 +479,12 @@ async function sendCaptchaFromPanel(channel: TextChannel, user: User, account: A
     correctColor: correct.id,
     originalMessage: null,
     panelCtx: { channelId: channel.id, userId: user.id },
+    panelInteraction,
     timeoutHandle,
   });
 }
 
-async function deliverAccountFromPanelCtx(account: Account, tier: StockTier, channelId: string, userId: string) {
+async function deliverAccountFromPanelCtx(account: Account, tier: StockTier, channelId: string, userId: string, panelInteraction?: MessageComponentInteraction) {
   const user = await client.users.fetch(userId).catch(() => null);
   if (!user) return;
   const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
@@ -448,7 +561,13 @@ async function deliverAccountFromPanelCtx(account: Account, tier: StockTier, cha
       .setFooter({ text: "CoolGEN Panel" })
       .setTimestamp();
     if (profile?.avatarUrl) channelEmbed.setThumbnail(profile.avatarUrl);
-    await channel.send({ embeds: [channelEmbed] });
+    if (panelInteraction) {
+      await panelInteraction.followUp({ embeds: [channelEmbed], ephemeral: true }).catch(() =>
+        channel.send({ embeds: [channelEmbed] })
+      );
+    } else {
+      await channel.send({ embeds: [channelEmbed] });
+    }
   } catch {
     pendingAccounts.set(userId, { account, tier });
     await channel.send({ content: `${user}`, embeds: [dmOffEmbed()], components: [dmOffRow()] });
@@ -480,6 +599,9 @@ client.once("clientReady", async (c) => {
       await guild.leave().catch(() => null);
     }
   }
+
+  // Load persisted panel data (subscribers, panelMessageId, etc.)
+  loadPanelData();
 
   // Post the generator panel
   await postOrUpdatePanel(c).catch(() => null);
@@ -716,7 +838,64 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     const id = interaction.customId;
     const userId = interaction.user.id;
 
-    if (id === "dm_yes") {
+    if (id === "skip_cooldown_main" || id === "skip_cooldown_ag" || id.startsWith("skip_panel_cd:")) {
+      const member = await interaction.guild?.members.fetch(userId).catch(() => null);
+      const hasGod2 = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+      const hasPremium2 = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+      const skipLimit = getSkipLimit(hasGod2, hasPremium2);
+      const skipsUsed = getSkipsUsed(userId);
+
+      if (skipsUsed >= skipLimit) {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("❌ No Skips Left")
+              .setDescription(`You've used all **${skipLimit}** skip(s) for today. Your skips reset at midnight.`),
+          ],
+          ephemeral: true,
+        });
+        return;
+      }
+
+      useSkip(userId);
+      const skipsLeft = Math.max(0, skipLimit - getSkipsUsed(userId));
+
+      if (id === "skip_cooldown_main") {
+        generateCooldowns.delete(userId);
+      } else if (id === "skip_cooldown_ag") {
+        ageGroupCooldowns.delete(userId);
+      } else {
+        const tier = id.replace("skip_panel_cd:", "") as StockTier;
+        if (tier === "agegroup") ageGroupCooldowns.delete(userId);
+        else generateCooldowns.delete(userId);
+      }
+
+      if (id.startsWith("skip_panel_cd:")) {
+        const tier = id.replace("skip_panel_cd:", "") as StockTier;
+        await interaction.update({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("⚡ Cooldown Skipped!")
+              .setDescription(`Your cooldown has been cleared! \`${skipsLeft}/${skipLimit}\` skip(s) left today.\n\nClick **🎮 Generate** in the panel to generate now.`),
+          ],
+          components: [],
+        });
+      } else {
+        await interaction.update({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("⚡ Cooldown Skipped!")
+              .setDescription(`Your cooldown has been cleared! \`${skipsLeft}/${skipLimit}\` skip(s) left today.\n\nRun the generate command again to get your account.`),
+          ],
+          components: [],
+        });
+      }
+      return;
+
+    } else if (id === "dm_yes") {
       const pending = pendingAccounts.get(userId);
       if (!pending) {
         await interaction.reply({ content: "❌ No pending account found — it may have expired.", ephemeral: true });
@@ -874,7 +1053,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (id === pending.correctColor) {
         await interaction.deferUpdate().catch(() => null);
         if (pending.panelCtx) {
-          await deliverAccountFromPanelCtx(pending.account, pending.tier, pending.panelCtx.channelId, pending.panelCtx.userId);
+          await deliverAccountFromPanelCtx(pending.account, pending.tier, pending.panelCtx.channelId, pending.panelCtx.userId, pending.panelInteraction);
         } else {
           await deliverAccount(pending.account, pending.tier, pending.originalMessage!);
         }
@@ -1028,18 +1207,22 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     } else if (id === "panel_restock") {
       if (restockSubscribers.has(userId)) {
         restockSubscribers.delete(userId);
+        savePanelData();
         await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("🔕 **Restock Alerts OFF** — You won't be DM'd when stock is added.")], ephemeral: true });
       } else {
         restockSubscribers.add(userId);
+        savePanelData();
         await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x00c851).setDescription("🔔 **Restock Alerts ON** — You'll get a DM whenever stock is added!")], ephemeral: true });
       }
 
     } else if (id === "panel_cdnotify") {
       if (cdNotifyUsers.has(userId)) {
         cdNotifyUsers.delete(userId);
+        savePanelData();
         await interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("🔕 **CD Notifications OFF** — You won't be DM'd when your cooldown expires.")], ephemeral: true });
       } else {
         cdNotifyUsers.add(userId);
+        savePanelData();
         await interaction.reply({ embeds: [new EmbedBuilder().setColor(0x00c851).setDescription("⏰ **CD Notifications ON** — You'll get a DM when your generate cooldown is ready!")], ephemeral: true });
       }
 
@@ -1078,9 +1261,13 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         const cdMs = tier === "agegroup" ? AGE_GROUP_COOLDOWN_MS : GENERATE_COOLDOWN_MS;
         const remaining = cdMs - (Date.now() - lastCd);
         if (remaining > 0) {
-          const mins = Math.floor(remaining / 60000);
-          const secs = Math.ceil((remaining % 60000) / 1000);
-          await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("⏳ Cooldown Active").setDescription(`Wait **${mins}m ${secs}s** before generating again.`)], components: [] });
+          const skipsUsed = getSkipsUsed(userId);
+          const skipLimit = getSkipLimit(hasGod, hasPremium);
+          const skipsLeft = Math.max(0, skipLimit - skipsUsed);
+          await interaction.update({
+            embeds: [buildCooldownWithSkipEmbed(remaining, skipsUsed, skipLimit)],
+            components: [buildSkipRow(skipsLeft, `panel:${tier}`)],
+          });
           return;
         }
       }
@@ -1100,7 +1287,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
 
       await interaction.update({ embeds: [new EmbedBuilder().setColor(0x00c851).setDescription("✅ Captcha sent in the channel! Complete it to receive your account.")], components: [] });
       const channel = interaction.channel as TextChannel;
-      await sendCaptchaFromPanel(channel, interaction.user, account, tier);
+      await sendCaptchaFromPanel(channel, interaction.user, account, tier, interaction);
 
     } else if (interaction.customId === "multistock_tier") {
       const userId = interaction.user.id;
@@ -1633,16 +1820,7 @@ async function handleGenerate(message: Message) {
   }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.ceil((remaining % 60000) / 1000);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("⏳ Cooldown Active")
-          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-      ],
-    });
+    await replyCooldownMsg(message, remaining);
     return;
   }
 
@@ -1957,16 +2135,7 @@ async function handleGenerateAgeGroup(message: Message) {
   if (last) {
     const remaining = AGE_GROUP_COOLDOWN_MS - (Date.now() - last);
     if (remaining > 0) {
-      const mins = Math.floor(remaining / 60000);
-      const secs = Math.ceil((remaining % 60000) / 1000);
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0xff4444)
-            .setTitle("⏳ Cooldown Active")
-            .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-        ],
-      });
+      await replyAgCooldownMsg(message, remaining);
       return;
     }
   }
@@ -2065,16 +2234,7 @@ async function handleGenerateRare(message: Message) {
 
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.ceil((remaining % 60000) / 1000);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("⏳ Cooldown Active")
-          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-      ],
-    });
+    await replyCooldownMsg(message, remaining);
     return;
   }
 
@@ -2112,16 +2272,7 @@ async function handleGenerateGod(message: Message) {
   }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.ceil((remaining % 60000) / 1000);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("⏳ Cooldown Active")
-          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-      ],
-    });
+    await replyCooldownMsg(message, remaining);
     return;
   }
 
@@ -2172,16 +2323,7 @@ async function handleGeneratePremium(message: Message) {
   }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.ceil((remaining % 60000) / 1000);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("⏳ Cooldown Active")
-          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-      ],
-    });
+    await replyCooldownMsg(message, remaining);
     return;
   }
 
@@ -2296,16 +2438,7 @@ async function handleAddApiKeys(message: Message, keys: string[]) {
 async function handleGenerateAlt(message: Message) {
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.ceil((remaining % 60000) / 1000);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("⏳ Cooldown Active")
-          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-      ],
-    });
+    await replyCooldownMsg(message, remaining);
     return;
   }
 
@@ -3422,16 +3555,7 @@ async function handleGenerateDump(message: Message, _unused?: string) {
 
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.ceil((remaining % 60000) / 1000);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("⏳ Cooldown Active")
-          .setDescription(`You must wait **${mins}m ${secs}s** before generating again.`),
-      ],
-    });
+    await replyCooldownMsg(message, remaining);
     return;
   }
 
