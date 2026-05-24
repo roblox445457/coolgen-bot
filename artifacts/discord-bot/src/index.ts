@@ -148,6 +148,9 @@ const bulkGenCooldowns = new Map<string, number>();
 const bulkGenDumpCooldowns = new Map<string, number>();
 const bulkSnipeCooldowns = new Map<string, number>();
 
+// Whitelist — users who bypass all cooldowns
+const whitelistedUsers = new Set<string>();
+
 // Skip Daily Cooldown — tracks how many times each user has skipped today
 const cdSkipUsage = new Map<string, { date: string; count: number }>();
 
@@ -313,6 +316,9 @@ function loadPanelData(): void {
     if (Array.isArray(data.cdNotifyUsers)) {
       for (const id of data.cdNotifyUsers) cdNotifyUsers.add(id);
     }
+    if (Array.isArray(data.whitelistedUsers)) {
+      for (const id of data.whitelistedUsers) whitelistedUsers.add(id);
+    }
   } catch { /* file doesn't exist yet, start fresh */ }
 }
 
@@ -322,6 +328,7 @@ function savePanelData(): void {
       panelMessageId,
       restockSubscribers: [...restockSubscribers],
       cdNotifyUsers: [...cdNotifyUsers],
+      whitelistedUsers: [...whitelistedUsers],
     };
     fs.writeFileSync(PANEL_DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch { /* ignore write errors */ }
@@ -824,6 +831,14 @@ client.on("messageCreate", async (message: Message) => {
     await handleGenerateDump(message);
   } else if (command === "exportaccounts") {
     await handleExportAccounts(message, args[1]);
+  } else if (command === "mystats") {
+    await handleMyStats(message);
+  } else if (command === "cd") {
+    await handleCooldownCheck(message);
+  } else if (command === "whitelist") {
+    await handleWhitelist(message, args[1]?.toLowerCase(), args[2]);
+  } else if (command === "announce") {
+    await handleAnnounce(message, args.slice(1));
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -1256,19 +1271,21 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
 
-      const lastCd = tier === "agegroup" ? ageGroupCooldowns.get(userId) : generateCooldowns.get(userId);
-      if (lastCd) {
-        const cdMs = tier === "agegroup" ? AGE_GROUP_COOLDOWN_MS : GENERATE_COOLDOWN_MS;
-        const remaining = cdMs - (Date.now() - lastCd);
-        if (remaining > 0) {
-          const skipsUsed = getSkipsUsed(userId);
-          const skipLimit = getSkipLimit(hasGod, hasPremium);
-          const skipsLeft = Math.max(0, skipLimit - skipsUsed);
-          await interaction.update({
-            embeds: [buildCooldownWithSkipEmbed(remaining, skipsUsed, skipLimit)],
-            components: [buildSkipRow(skipsLeft, `panel:${tier}`)],
-          });
-          return;
+      if (!whitelistedUsers.has(userId)) {
+        const lastCd = tier === "agegroup" ? ageGroupCooldowns.get(userId) : generateCooldowns.get(userId);
+        if (lastCd) {
+          const cdMs = tier === "agegroup" ? AGE_GROUP_COOLDOWN_MS : GENERATE_COOLDOWN_MS;
+          const remaining = cdMs - (Date.now() - lastCd);
+          if (remaining > 0) {
+            const skipsUsed = getSkipsUsed(userId);
+            const skipLimit = getSkipLimit(hasGod, hasPremium);
+            const skipsLeft = Math.max(0, skipLimit - skipsUsed);
+            await interaction.update({
+              embeds: [buildCooldownWithSkipEmbed(remaining, skipsUsed, skipLimit)],
+              components: [buildSkipRow(skipsLeft, `panel:${tier}`)],
+            });
+            return;
+          }
         }
       }
 
@@ -1719,6 +1736,7 @@ async function deliverAccount(
 }
 
 function checkCooldown(userId: string): number | null {
+  if (whitelistedUsers.has(userId)) return null;
   const last = generateCooldowns.get(userId);
   if (!last) return null;
   const remaining = GENERATE_COOLDOWN_MS - (Date.now() - last);
@@ -2131,12 +2149,14 @@ async function handleGenerateAgeGroup(message: Message) {
     });
     return;
   }
-  const last = ageGroupCooldowns.get(message.author.id);
-  if (last) {
-    const remaining = AGE_GROUP_COOLDOWN_MS - (Date.now() - last);
-    if (remaining > 0) {
-      await replyAgCooldownMsg(message, remaining);
-      return;
+  if (!whitelistedUsers.has(message.author.id)) {
+    const last = ageGroupCooldowns.get(message.author.id);
+    if (last) {
+      const remaining = AGE_GROUP_COOLDOWN_MS - (Date.now() - last);
+      if (remaining > 0) {
+        await replyAgCooldownMsg(message, remaining);
+        return;
+      }
     }
   }
 
@@ -3260,6 +3280,196 @@ async function handleAllSnipedAccs(message: Message) {
   }
 }
 
+async function handleMyStats(message: Message) {
+  const userId = message.author.id;
+  const member = message.member ?? await message.guild?.members.fetch(userId).catch(() => null);
+  const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+  const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+  const tierBadge  = hasGod ? "🌟 CoolGEN God" : hasPremium ? "⭐ CoolGEN Premium" : "🟢 CoolGEN Free";
+  const isWL       = whitelistedUsers.has(userId);
+
+  const lbEntry  = leaderboard.get(userId);
+  const totalGen = lbEntry?.count ?? 0;
+  const sorted   = [...leaderboard.entries()].sort((a, b) => b[1].count - a[1].count);
+  const rank     = sorted.findIndex(([id]) => id === userId);
+  const rankStr  = rank === -1 ? "Unranked" : `#${rank + 1}`;
+
+  const skipLimit = getSkipLimit(hasGod, hasPremium);
+  const skipsUsed = getSkipsUsed(userId);
+  const skipsLeft = Math.max(0, skipLimit - skipsUsed);
+
+  const genCdTs  = generateCooldowns.get(userId);
+  const agCdTs   = ageGroupCooldowns.get(userId);
+  const bulkCdTs = bulkGenCooldowns.get(userId);
+
+  const genCdEnd  = genCdTs  ? genCdTs  + GENERATE_COOLDOWN_MS  : null;
+  const agCdEnd   = agCdTs   ? agCdTs   + AGE_GROUP_COOLDOWN_MS  : null;
+  const bulkCdEnd = bulkCdTs ? bulkCdTs + BULK_GEN_COOLDOWN_MS   : null;
+
+  const now = Date.now();
+  const cdLine = (label: string, endMs: number | null) => {
+    if (isWL) return `${label}: \`Whitelisted — No CD\``;
+    if (!endMs || endMs <= now) return `${label}: \`✅ Ready\``;
+    return `${label}: <t:${Math.floor(endMs / 1000)}:R>`;
+  };
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 ${message.author.username}'s Stats`)
+    .setColor(hasGod ? 0x9b59b6 : hasPremium ? 0xf5a623 : 0x00c851)
+    .setThumbnail(message.author.displayAvatarURL())
+    .addFields(
+      { name: "🎖️ Tier",          value: tierBadge,                                   inline: true  },
+      { name: "🏆 Leaderboard",   value: `\`${rankStr}\``,                            inline: true  },
+      { name: "🎮 Total Generates", value: `\`${totalGen}\``,                         inline: true  },
+      { name: "⚡ Skips Today",   value: `\`${skipsUsed}/${skipLimit}\` (${skipsLeft} left)`, inline: true },
+      { name: "🔐 Whitelisted",   value: isWL ? "✅ Yes" : "❌ No",                  inline: true  },
+      { name: "\u200b",           value: "\u200b",                                    inline: false },
+      { name: "⏳ Cooldown Status", value:
+          [
+            cdLine("🎮 Generate",   genCdEnd),
+            cdLine("🎂 Age Group",  agCdEnd),
+            cdLine("📦 Bulk Gen",   bulkCdEnd),
+          ].join("\n"),
+        inline: false },
+    )
+    .setFooter({ text: "CoolGEN · Your Stats" })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function handleCooldownCheck(message: Message) {
+  const userId = message.author.id;
+  const isWL   = whitelistedUsers.has(userId);
+  const now    = Date.now();
+
+  const genCdTs  = generateCooldowns.get(userId);
+  const agCdTs   = ageGroupCooldowns.get(userId);
+  const bulkCdTs = bulkGenCooldowns.get(userId);
+  const dumpCdTs = bulkGenDumpCooldowns.get(userId);
+
+  const genCdEnd  = genCdTs  ? genCdTs  + GENERATE_COOLDOWN_MS    : null;
+  const agCdEnd   = agCdTs   ? agCdTs   + AGE_GROUP_COOLDOWN_MS    : null;
+  const bulkCdEnd = bulkCdTs ? bulkCdTs + BULK_GEN_COOLDOWN_MS     : null;
+  const dumpCdEnd = dumpCdTs ? dumpCdTs + BULK_GEN_DUMP_COOLDOWN_MS : null;
+
+  const line = (label: string, endMs: number | null) => {
+    if (isWL) return `${label}: \`Whitelisted — No CD ⚡\``;
+    if (!endMs || endMs <= now) return `${label}: ✅ \`Ready\``;
+    return `${label}: ⏳ <t:${Math.floor(endMs / 1000)}:R>`;
+  };
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`⏰ Your Cooldowns`)
+    .setDescription(
+      [
+        line("🎮 Generate / Premium / God / Rare / Dump", genCdEnd),
+        line("🎂 Age Group", agCdEnd),
+        line("📦 Bulk Gen", bulkCdEnd),
+        line("🗑️ Bulk Gen Dump", dumpCdEnd),
+      ].join("\n")
+    )
+    .setFooter({ text: "CoolGEN · Cooldown Check" })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function handleWhitelist(message: Message, subArg: string | undefined, targetArg: string | undefined) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
+    return;
+  }
+
+  if (subArg === "list") {
+    if (whitelistedUsers.size === 0) {
+      await message.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle("📋 Whitelist").setDescription("No users are currently whitelisted.")] });
+      return;
+    }
+    const lines = await Promise.all([...whitelistedUsers].map(async (id) => {
+      const u = await client.users.fetch(id).catch(() => null);
+      return `• ${u ? `${u.username} (\`${id}\`)` : `\`${id}\``}`;
+    }));
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle(`📋 Whitelist — ${whitelistedUsers.size} user(s)`)
+          .setDescription(lines.join("\n"))
+          .setFooter({ text: "Whitelisted users bypass all cooldowns." })
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  const targetId = message.mentions.users.first()?.id ?? targetArg?.replace(/\D/g, "");
+  if (!targetId) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage:\n`j!whitelist add @user`\n`j!whitelist remove @user`\n`j!whitelist list`")] });
+    return;
+  }
+
+  const target = await client.users.fetch(targetId).catch(() => null);
+  const name   = target ? target.username : `\`${targetId}\``;
+
+  if (subArg === "add") {
+    whitelistedUsers.add(targetId);
+    savePanelData();
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setTitle("✅ Whitelisted")
+          .setDescription(`**${name}** has been added to the whitelist.\nThey now bypass all cooldowns.`)
+          .setTimestamp(),
+      ],
+    });
+  } else if (subArg === "remove") {
+    if (!whitelistedUsers.has(targetId)) {
+      await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${name}** is not on the whitelist.`)] });
+      return;
+    }
+    whitelistedUsers.delete(targetId);
+    savePanelData();
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ Removed from Whitelist")
+          .setDescription(`**${name}** has been removed from the whitelist.`)
+          .setTimestamp(),
+      ],
+    });
+  } else {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage:\n`j!whitelist add @user`\n`j!whitelist remove @user`\n`j!whitelist list`")] });
+  }
+}
+
+async function handleAnnounce(message: Message, args: string[]) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
+    return;
+  }
+
+  const text = args.join(" ").trim();
+  if (!text) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage: `j!announce <message>`")] });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xe8192c)
+    .setTitle("📢 CoolGEN Announcement")
+    .setDescription(text)
+    .setAuthor({ name: message.author.username, iconURL: message.author.displayAvatarURL() })
+    .setFooter({ text: "CoolGEN" })
+    .setTimestamp();
+
+  await (message.channel as TextChannel).send({ embeds: [embed] });
+  await message.delete().catch(() => null);
+}
+
 async function handleSetCooldown(message: Message, tierArg: string | undefined, minutesArg: string | undefined) {
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
@@ -3380,6 +3590,10 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!lockallstocks`",           value: "🔒 Lock all tiers at once." },
           { name: "`j!unlockallstocks`",         value: "🔓 Unlock all tiers at once." },
           { name: "`j!setcooldown <mins>`",      value: "⏱️ Set the main generate cooldown. Use `agegroup` as first arg for age group.\nExample: `j!setcooldown 5` · `j!setcooldown agegroup 3` · `j!setcooldown 0` removes it." },
+          { name: "`j!whitelist add @user`",    value: "⚡ Add a user to the whitelist — they bypass all cooldowns." },
+          { name: "`j!whitelist remove @user`", value: "❌ Remove a user from the whitelist." },
+          { name: "`j!whitelist list`",         value: "📋 List all whitelisted users." },
+          { name: "`j!announce <message>`",     value: "📢 Post a styled announcement embed in the current channel." },
         )
         .setFooter({ text: "CoolGEN · Prefix: j!" })
         .setTimestamp();
@@ -3389,10 +3603,12 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
         .setTitle("🛠️ CoolGEN — Utility Commands")
         .setColor(0x00c851)
         .addFields(
-          { name: "`j!user <username>`",        value: "Look up a Roblox user's full profile." },
-          { name: "`j!accountdays <username>`",  value: "Check how old a Roblox account is." },
-          { name: "`j!showapipanel`",            value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
-          { name: "`j!help`",                    value: "Show this help menu." },
+          { name: "`j!mystats`",                 value: "📊 View your personal dashboard — tier, total generates, leaderboard rank, skips remaining, and all cooldowns." },
+          { name: "`j!cd`",                      value: "⏰ Quick cooldown check — see exactly when each of your cooldowns expires." },
+          { name: "`j!user <username>`",          value: "Look up a Roblox user's full profile." },
+          { name: "`j!accountdays <username>`",   value: "Check how old a Roblox account is." },
+          { name: "`j!showapipanel`",             value: "🛠️ Open the API panel — redeem key, reset HWID, set webhook." },
+          { name: "`j!help`",                     value: "Show this help menu." },
         )
         .setFooter({ text: "CoolGEN · Prefix: j!" })
         .setTimestamp();
