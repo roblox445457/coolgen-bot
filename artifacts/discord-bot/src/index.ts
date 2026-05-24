@@ -151,6 +151,9 @@ const bulkSnipeCooldowns = new Map<string, number>();
 // Whitelist — users who bypass all cooldowns
 const whitelistedUsers = new Set<string>();
 
+// Blacklist — users banned from all generate commands
+const blacklistedUsers = new Set<string>();
+
 // Skip Daily Cooldown — tracks how many times each user has skipped today
 const cdSkipUsage = new Map<string, { date: string; count: number }>();
 
@@ -202,6 +205,18 @@ function buildSkipRow(skipsLeft: number, cdType: string): ActionRowBuilder<Butto
       .setStyle(ButtonStyle.Primary)
       .setDisabled(skipsLeft <= 0)
   );
+}
+
+async function replyBlacklisted(message: Message): Promise<void> {
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xff0000)
+        .setTitle("🚫 You're Blacklisted")
+        .setDescription("You have been blacklisted and cannot use any generate commands.\nContact a staff member if you believe this is a mistake.")
+        .setFooter({ text: "CoolGEN" }),
+    ],
+  });
 }
 
 async function replyCooldownMsg(message: Message, remaining: number): Promise<void> {
@@ -319,6 +334,9 @@ function loadPanelData(): void {
     if (Array.isArray(data.whitelistedUsers)) {
       for (const id of data.whitelistedUsers) whitelistedUsers.add(id);
     }
+    if (Array.isArray(data.blacklistedUsers)) {
+      for (const id of data.blacklistedUsers) blacklistedUsers.add(id);
+    }
   } catch { /* file doesn't exist yet, start fresh */ }
 }
 
@@ -329,6 +347,7 @@ function savePanelData(): void {
       restockSubscribers: [...restockSubscribers],
       cdNotifyUsers: [...cdNotifyUsers],
       whitelistedUsers: [...whitelistedUsers],
+      blacklistedUsers: [...blacklistedUsers],
     };
     fs.writeFileSync(PANEL_DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch { /* ignore write errors */ }
@@ -839,6 +858,12 @@ client.on("messageCreate", async (message: Message) => {
     await handleWhitelist(message, args[1]?.toLowerCase(), args[2]);
   } else if (command === "announce") {
     await handleAnnounce(message, args.slice(1));
+  } else if (command === "clearcd") {
+    await handleClearCd(message, args[1]);
+  } else if (command === "blacklist") {
+    await handleBlacklist(message, args[1]?.toLowerCase(), args[2]);
+  } else if (command === "stocklog") {
+    await handleStockLog(message);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -1264,6 +1289,13 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       }
       if (tier === "premium" && !hasPremium && !hasGod) {
         await interaction.update({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You need the **Premium** role to generate from Premium tier.")], components: [] });
+        return;
+      }
+      if (blacklistedUsers.has(userId)) {
+        await interaction.update({
+          embeds: [new EmbedBuilder().setColor(0xff0000).setTitle("🚫 You're Blacklisted").setDescription("You have been blacklisted and cannot use any generate commands.")],
+          components: [],
+        });
         return;
       }
       if (lockedStocks.has(tier)) {
@@ -1836,6 +1868,7 @@ async function handleGenerate(message: Message) {
     });
     return;
   }
+  if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
   const remaining = checkCooldown(message.author.id);
   if (remaining !== null) {
     await replyCooldownMsg(message, remaining);
@@ -2143,6 +2176,7 @@ async function handleGenerateAgeGroup(message: Message) {
     }
     return;
   }
+  if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
   if (lockedStocks.has("agegroup")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Age Group stock is currently locked. Please check back later.")],
@@ -2226,6 +2260,7 @@ async function handleGenerateRare(message: Message) {
     }
     return;
   }
+  if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
   if (lockedStocks.has("rare")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Rare Usernames stock is currently locked. Please check back later.")],
@@ -2284,6 +2319,7 @@ async function handleGenerateGod(message: Message) {
     }
     return;
   }
+  if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
   if (lockedStocks.has("god")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("God stock is currently locked. Please check back later.")],
@@ -2335,6 +2371,7 @@ async function handleGeneratePremium(message: Message) {
     }
     return;
   }
+  if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
   if (lockedStocks.has("premium")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Premium stock is currently locked. Please check back later.")],
@@ -3470,6 +3507,150 @@ async function handleAnnounce(message: Message, args: string[]) {
   await message.delete().catch(() => null);
 }
 
+async function handleClearCd(message: Message, targetArg: string | undefined) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
+    return;
+  }
+  const targetId = message.mentions.users.first()?.id ?? targetArg?.replace(/\D/g, "");
+  if (!targetId) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage: `j!clearcd @user`")] });
+    return;
+  }
+  generateCooldowns.delete(targetId);
+  ageGroupCooldowns.delete(targetId);
+  bulkGenCooldowns.delete(targetId);
+  bulkGenDumpCooldowns.delete(targetId);
+  bulkSnipeCooldowns.delete(targetId);
+  const target = await client.users.fetch(targetId).catch(() => null);
+  const name = target ? target.username : `\`${targetId}\``;
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00c851)
+        .setTitle("✅ Cooldowns Cleared")
+        .setDescription(`All active cooldowns for **${name}** have been reset.`)
+        .setTimestamp(),
+    ],
+  });
+}
+
+async function handleBlacklist(message: Message, subArg: string | undefined, targetArg: string | undefined) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
+    return;
+  }
+
+  if (subArg === "list") {
+    if (blacklistedUsers.size === 0) {
+      await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🚫 Blacklist").setDescription("No users are currently blacklisted.")] });
+      return;
+    }
+    const lines = await Promise.all([...blacklistedUsers].map(async (id) => {
+      const u = await client.users.fetch(id).catch(() => null);
+      return `• ${u ? `${u.username} (\`${id}\`)` : `\`${id}\``}`;
+    }));
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle(`🚫 Blacklist — ${blacklistedUsers.size} user(s)`)
+          .setDescription(lines.join("\n"))
+          .setFooter({ text: "Blacklisted users cannot use any generate commands." })
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  const targetId = message.mentions.users.first()?.id ?? targetArg?.replace(/\D/g, "");
+  if (!targetId) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage:\n`j!blacklist add @user`\n`j!blacklist remove @user`\n`j!blacklist list`")] });
+    return;
+  }
+  const target = await client.users.fetch(targetId).catch(() => null);
+  const name = target ? target.username : `\`${targetId}\``;
+
+  if (subArg === "add") {
+    blacklistedUsers.add(targetId);
+    savePanelData();
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("🚫 User Blacklisted")
+          .setDescription(`**${name}** has been blacklisted and can no longer use any generate commands.`)
+          .setTimestamp(),
+      ],
+    });
+  } else if (subArg === "remove") {
+    if (!blacklistedUsers.has(targetId)) {
+      await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription(`❌ **${name}** is not on the blacklist.`)] });
+      return;
+    }
+    blacklistedUsers.delete(targetId);
+    savePanelData();
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setTitle("✅ Removed from Blacklist")
+          .setDescription(`**${name}** has been removed from the blacklist.`)
+          .setTimestamp(),
+      ],
+    });
+  } else {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage:\n`j!blacklist add @user`\n`j!blacklist remove @user`\n`j!blacklist list`")] });
+  }
+}
+
+async function handleStockLog(message: Message) {
+  if (message.author.id !== STOCK_ALLOWED_USER_ID) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
+    return;
+  }
+
+  const tiers: { label: string; accounts: Account[] }[] = [
+    { label: "Free",      accounts: getAllAccounts() },
+    { label: "Premium",   accounts: getAllPremiumAccounts() },
+    { label: "God",       accounts: getAllGodAccounts() },
+    { label: "AgeGroup",  accounts: getAllAgeGroupAccounts() },
+    { label: "Rare",      accounts: getAllRareAccounts() },
+    { label: "Dump",      accounts: getAllDumpAccounts() },
+  ];
+
+  const lines: string[] = [];
+  let total = 0;
+  for (const { label, accounts } of tiers) {
+    if (accounts.length === 0) continue;
+    lines.push(`# ── ${label} (${accounts.length}) ──`);
+    for (const acc of accounts) {
+      lines.push(`${acc.username}:${acc.password}`);
+    }
+    lines.push("");
+    total += accounts.length;
+  }
+
+  if (total === 0) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("📦 All tiers are currently empty.")] });
+    return;
+  }
+
+  const content = lines.join("\n");
+  const buf = Buffer.from(content, "utf-8");
+  const attachment = new AttachmentBuilder(buf, { name: "stocklog.txt" });
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("📋 Stock Log")
+        .setDescription(`**${total}** accounts across all tiers exported as combos (\`username:password\`).`)
+        .setTimestamp(),
+    ],
+    files: [attachment],
+  });
+}
+
 async function handleSetCooldown(message: Message, tierArg: string | undefined, minutesArg: string | undefined) {
   if (message.author.id !== STOCK_ALLOWED_USER_ID) {
     await message.reply({
@@ -3593,6 +3774,11 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!whitelist add @user`",    value: "⚡ Add a user to the whitelist — they bypass all cooldowns." },
           { name: "`j!whitelist remove @user`", value: "❌ Remove a user from the whitelist." },
           { name: "`j!whitelist list`",         value: "📋 List all whitelisted users." },
+          { name: "`j!blacklist add @user`",    value: "🚫 Ban a user from all generate commands." },
+          { name: "`j!blacklist remove @user`", value: "✅ Unban a user from generate commands." },
+          { name: "`j!blacklist list`",         value: "📋 List all blacklisted users." },
+          { name: "`j!clearcd @user`",          value: "⏰ Instantly reset all cooldowns for a user." },
+          { name: "`j!stocklog`",               value: "📋 Export all current stock as a `.txt` file in `username:password` combo format." },
           { name: "`j!announce <message>`",     value: "📢 Post a styled announcement embed in the current channel." },
         )
         .setFooter({ text: "CoolGEN · Prefix: j!" })
@@ -3761,7 +3947,7 @@ async function handleGenerateDump(message: Message, _unused?: string) {
     }
     return;
   }
-
+  if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
   if (lockedStocks.has("dump")) {
     await message.reply({
       embeds: [new EmbedBuilder().setColor(0xff4444).setTitle("🔒 Stock Locked").setDescription("Dump stock is currently locked. Please check back later.")],
