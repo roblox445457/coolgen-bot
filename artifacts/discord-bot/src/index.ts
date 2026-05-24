@@ -152,6 +152,19 @@ const bulkGenStatusUsers = new Set<string>();
 // Pending multistock entries waiting for tier selection
 const pendingMultiStock = new Map<string, string[]>(); // userId → raw entries
 
+client.once('ready', () => {
+    console.log('Bot online');
+
+    client.user?.setPresence({
+      activities: [
+        {
+          name: '.𝒈𝒈/𝒄𝒐𝒐𝒍𝒈𝒆𝒏',
+          type: 1
+        }
+      ],
+      status: 'online'
+    });
+});
 // Fakestock — owner can set a fake count per tier to prank users
 type StockTier = "free" | "premium" | "god" | "agegroup" | "rare" | "dump";
 const fakeStockSettings = new Map<StockTier, number>(); // tier → fake count (only present when ON)
@@ -218,7 +231,7 @@ function buildPanelEmbed(): EmbedBuilder {
     "█".repeat(Math.min(n, 10)) + "░".repeat(Math.max(0, 10 - Math.min(n, 10))) + ` \`${n}\``;
 
   return new EmbedBuilder()
-    .setTitle("🎮 CoolGEN — Generator Panel")
+    .setTitle("CoolGEN — Generator Panel")
     .setColor(0xe8192c)
     .setDescription("Use the buttons below to generate accounts, check stock, view the leaderboard, or manage your notifications.")
     .addFields(
