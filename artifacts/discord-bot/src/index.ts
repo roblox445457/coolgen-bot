@@ -178,6 +178,7 @@ function useSkip(userId: string): void {
   } else {
     entry.count++;
   }
+  savePanelData();
 }
 
 function buildCooldownWithSkipEmbed(remaining: number, skipsUsed: number, skipLimit: number): EmbedBuilder {
@@ -337,6 +338,14 @@ function loadPanelData(): void {
     if (Array.isArray(data.blacklistedUsers)) {
       for (const id of data.blacklistedUsers) blacklistedUsers.add(id);
     }
+    if (data.cdSkipUsage && typeof data.cdSkipUsage === "object") {
+      for (const [id, entry] of Object.entries(data.cdSkipUsage)) {
+        const e = entry as { date: string; count: number };
+        if (e.date === new Date().toDateString()) {
+          cdSkipUsage.set(id, e);
+        }
+      }
+    }
   } catch { /* file doesn't exist yet, start fresh */ }
 }
 
@@ -348,6 +357,7 @@ function savePanelData(): void {
       cdNotifyUsers: [...cdNotifyUsers],
       whitelistedUsers: [...whitelistedUsers],
       blacklistedUsers: [...blacklistedUsers],
+      cdSkipUsage: Object.fromEntries(cdSkipUsage),
     };
     fs.writeFileSync(PANEL_DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch { /* ignore write errors */ }
