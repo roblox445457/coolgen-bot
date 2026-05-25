@@ -3171,41 +3171,45 @@ async function handleDSnipe(message: Message, startLetterRaw?: string) {
       startLetter + Array.from({ length: 4 }, () => "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)]).join("")
     );
     const lines = names.map((n, i) => `\`${i + 1}.\` **${n}**`);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xf5a623)
-          .setTitle(`🎯 Discord Username Sniper — Starting with "${startLetter.toUpperCase()}"`)
-          .setDescription(
-            `Here are **10 random 5-letter Discord usernames** starting with **\`${startLetter}\`**:\n\n` +
-            lines.join("\n") +
-            "\n\n> Check availability at **discord.com** or via the app."
-          )
-          .setFooter({ text: "CoolGEN Premium · Run again for a new batch" })
-          .setTimestamp(),
-      ],
-    });
+    const dmEmbed = new EmbedBuilder()
+      .setColor(0xf5a623)
+      .setTitle(`🎯 Discord Username Sniper — Starting with "${startLetter.toUpperCase()}"`)
+      .setDescription(
+        `Here are **10 random 5-letter Discord usernames** starting with **\`${startLetter}\`**:\n\n` +
+        lines.join("\n") +
+        "\n\n> Check availability at **discord.com** or via the app."
+      )
+      .setFooter({ text: "CoolGEN Premium · Run again for a new batch" })
+      .setTimestamp();
+    try {
+      await message.author.send({ embeds: [dmEmbed] });
+      await message.reply({ embeds: [new EmbedBuilder().setColor(0xf5a623).setDescription("📬 Sent your username batch to your DMs!")] });
+    } catch {
+      await message.reply({ embeds: [dmEmbed.setFooter({ text: "CoolGEN Premium · Enable DMs to receive results privately" })] });
+    }
     return;
   }
 
   // ── Free mode: fully random ──────────────────────────────────────────────
   const names = Array.from({ length: 10 }, generateDSnipeUsername);
   const lines = names.map((n, i) => `\`${i + 1}.\` **${n}**`);
-  await message.reply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setTitle("🎯 Discord Username Sniper")
-        .setDescription(
-          "Here are **10 random 5-letter Discord usernames** to try:\n\n" +
-          lines.join("\n") +
-          "\n\n> 💡 **Premium members** can run `j!dsnipe <letter>` to filter by starting letter.\n" +
-          "> Check availability at **discord.com** or via the app."
-        )
-        .setFooter({ text: "CoolGEN · Run again for a new batch" })
-        .setTimestamp(),
-    ],
-  });
+  const dmEmbed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("🎯 Discord Username Sniper")
+    .setDescription(
+      "Here are **10 random 5-letter Discord usernames** to try:\n\n" +
+      lines.join("\n") +
+      "\n\n> 💡 **Premium members** can run `j!dsnipe <letter>` to filter by starting letter.\n" +
+      "> Check availability at **discord.com** or via the app."
+    )
+    .setFooter({ text: "CoolGEN · Run again for a new batch" })
+    .setTimestamp();
+  try {
+    await message.author.send({ embeds: [dmEmbed] });
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription("📬 Sent your username batch to your DMs!")] });
+  } catch {
+    await message.reply({ embeds: [dmEmbed.setFooter({ text: "CoolGEN · Enable DMs to receive results privately" })] });
+  }
 }
 
 async function handleSnipe(message: Message) {
