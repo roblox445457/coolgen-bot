@@ -158,3 +158,29 @@ export function getAllGodAccounts(): Account[]      { return loadFile(GOD_STOCK_
 export function getAllAgeGroupAccounts(): Account[] { return loadFile(AGE_GROUP_STOCK_FILE); }
 export function getAllRareAccounts(): Account[]     { return loadFile(RARE_STOCK_FILE); }
 export function getAllDumpAccounts(): Account[]     { return loadFile(DUMP_STOCK_FILE); }
+
+// ── Transfer between tiers ────────────────────────────────────────────────────
+
+const TIER_FILES: Record<string, string> = {
+  free:     STOCK_FILE,
+  premium:  PREMIUM_STOCK_FILE,
+  god:      GOD_STOCK_FILE,
+  agegroup: AGE_GROUP_STOCK_FILE,
+  rare:     RARE_STOCK_FILE,
+  dump:     DUMP_STOCK_FILE,
+};
+
+export function transferAccounts(from: string, to: string, count: number): number {
+  const srcFile = TIER_FILES[from];
+  const dstFile = TIER_FILES[to];
+  if (!srcFile || !dstFile) return 0;
+
+  const src = loadFile(srcFile);
+  const moved = src.splice(0, count);
+  if (moved.length === 0) return 0;
+
+  saveFile(srcFile, src);
+  const dst = loadFile(dstFile);
+  saveFile(dstFile, [...dst, ...moved]);
+  return moved.length;
+}

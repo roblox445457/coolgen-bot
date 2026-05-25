@@ -30,6 +30,7 @@ import {
   addRareAccount, popRareAccount, rareStockCount,
   getAllAccounts, getAllGodAccounts, getAllPremiumAccounts, getAllAgeGroupAccounts, getAllRareAccounts, getAllDumpAccounts,
   addDumpAccount, popDumpAccount, dumpStockCount,
+  transferAccounts,
 } from "./stock.js";
 import {
   addApiKeys, apiKeyPoolCount,
@@ -120,6 +121,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildMembers,
   ],
 });
 
@@ -741,6 +743,27 @@ client.on("presenceUpdate", async (_old, newPresence) => {
   }
 });
 
+client.on("guildMemberAdd", async (member) => {
+  if (member.guild.id !== HOME_GUILD_ID) return;
+  try {
+    await member.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00c851)
+          .setTitle("👋 Welcome to CoolGEN!")
+          .setDescription(
+            `Hey **${member.user.username}**, seems you're new here!\n\n` +
+            `🟢 Use \`j!generate\` to get a free Roblox account.\n` +
+            `🗑️ If free stock is off, try \`j!generatedump\` instead.\n\n` +
+            `📋 Type \`j!help\` to see all available commands.`
+          )
+          .setFooter({ text: "CoolGEN · Enjoy your stay!" })
+          .setTimestamp(),
+      ],
+    });
+  } catch { /* user has DMs off — silently ignore */ }
+});
+
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
   // Ignore all DMs — bot only responds in servers
@@ -878,6 +901,8 @@ client.on("messageCreate", async (message: Message) => {
     await handleBlacklist(message, args[1]?.toLowerCase(), args[2]);
   } else if (command === "stocklog") {
     await handleStockLog(message);
+  } else if (command === "transferstock") {
+    await handleTransferStock(message, args[1], args[2], args[3]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -3618,6 +3643,57 @@ async function handleBlacklist(message: Message, subArg: string | undefined, tar
   }
 }
 
+const VALID_TIERS = new Set(["free", "premium", "god", "agegroup", "rare", "dump"]);
+const TIER_LABELS: Record<string, string> = {
+  free: "🟢 Free", premium: "⭐ Premium", god: "🌟 God",
+  agegroup: "🎂 Age Group", rare: "💎 Rare", dump: "🗑️ Dump",
+};
+
+async function handleTransferStock(message: Message, fromArg: string | undefined, toArg: string | undefined, countArg: string | undefined) {
+  if (!isAdmin(message.author.id)) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
+    return;
+  }
+
+  const from  = fromArg?.toLowerCase();
+  const to    = toArg?.toLowerCase();
+  const count = parseInt(countArg ?? "", 10);
+
+  if (!from || !VALID_TIERS.has(from) || !to || !VALID_TIERS.has(to)) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Usage: `j!transferstock <from> <to> <count>`\nValid tiers: `free` `premium` `god` `agegroup` `rare` `dump`")] });
+    return;
+  }
+  if (from === to) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Source and destination tiers must be different.")] });
+    return;
+  }
+  if (isNaN(count) || count < 1) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription("❌ Count must be a number greater than 0.")] });
+    return;
+  }
+
+  const moved = transferAccounts(from, to, count);
+  if (moved === 0) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setDescription(`❌ No accounts in **${TIER_LABELS[from]}** stock to transfer.`)] });
+    return;
+  }
+
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00c851)
+        .setTitle("✅ Stock Transferred")
+        .addFields(
+          { name: "From", value: TIER_LABELS[from], inline: true },
+          { name: "To",   value: TIER_LABELS[to],   inline: true },
+          { name: "Moved", value: `\`${moved}\` account(s)`, inline: true },
+        )
+        .setFooter({ text: moved < count ? `Only ${moved} available — all were moved.` : "" })
+        .setTimestamp(),
+    ],
+  });
+}
+
 async function handleStockLog(message: Message) {
   if (!isAdmin(message.author.id)) {
     await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission.")] });
@@ -3793,6 +3869,7 @@ function buildHelpTabEmbed(tab: string): EmbedBuilder {
           { name: "`j!blacklist list`",         value: "📋 List all blacklisted users." },
           { name: "`j!clearcd @user`",          value: "⏰ Instantly reset all cooldowns for a user." },
           { name: "`j!stocklog`",               value: "📋 Export all current stock as a `.txt` file in `username:password` combo format." },
+          { name: "`j!transferstock <from> <to> <count>`", value: "🔄 Move accounts between tiers.\nTiers: `free` `premium` `god` `agegroup` `rare` `dump`\nExample: `j!transferstock dump free 10`" },
           { name: "`j!announce <message>`",     value: "📢 Post a styled announcement embed in the current channel." },
         )
         .setFooter({ text: "CoolGEN · Prefix: j!" })
