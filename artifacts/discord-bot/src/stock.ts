@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -25,7 +25,9 @@ function loadFile(file: string): Account[] {
 }
 
 function saveFile(file: string, accounts: Account[]): void {
-  writeFileSync(file, JSON.stringify(accounts, null, 2), "utf-8");
+  const tmp = file + ".tmp";
+  writeFileSync(tmp, JSON.stringify(accounts, null, 2), "utf-8");
+  renameSync(tmp, file);
 }
 
 // ── Regular stock ─────────────────────────────────────────────────────────────

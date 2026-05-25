@@ -326,6 +326,22 @@ const cdNotifyUsers = new Set<string>();
 
 // ── Panel data persistence ────────────────────────────────────────────────
 const PANEL_DATA_FILE = "panel-data.json";
+const STOCK_HISTORY_FILE = "stock-history.json";
+
+interface StockHistoryEntry { tier: string; count: number; timestamp: number; }
+let stockHistory: StockHistoryEntry[] = [];
+
+function loadStockHistory(): void {
+  try {
+    stockHistory = JSON.parse(fs.readFileSync(STOCK_HISTORY_FILE, "utf-8")) as StockHistoryEntry[];
+  } catch { stockHistory = []; }
+}
+
+function logStockHistory(tier: string, count: number): void {
+  stockHistory.push({ tier, count, timestamp: Date.now() });
+  if (stockHistory.length > 50) stockHistory = stockHistory.slice(-50);
+  try { fs.writeFileSync(STOCK_HISTORY_FILE, JSON.stringify(stockHistory, null, 2), "utf-8"); } catch { /* ignore */ }
+}
 
 function loadPanelData(): void {
   try {
@@ -352,6 +368,14 @@ function loadPanelData(): void {
         }
       }
     }
+    if (data.leaderboard && typeof data.leaderboard === "object") {
+      for (const [id, entry] of Object.entries(data.leaderboard)) {
+        const e = entry as { tag: string; count: number };
+        if (e && typeof e.tag === "string" && typeof e.count === "number") {
+          leaderboard.set(id, { tag: e.tag, count: e.count });
+        }
+      }
+    }
   } catch { /* file doesn't exist yet, start fresh */ }
 }
 
@@ -364,6 +388,7 @@ function savePanelData(): void {
       whitelistedUsers: [...whitelistedUsers],
       blacklistedUsers: [...blacklistedUsers],
       cdSkipUsage: Object.fromEntries(cdSkipUsage),
+      leaderboard: Object.fromEntries([...leaderboard.entries()].map(([k, v]) => [k, { ...v }])),
     };
     fs.writeFileSync(PANEL_DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch { /* ignore write errors */ }
@@ -585,6 +610,7 @@ async function deliverAccountFromPanelCtx(account: Account, tier: StockTier, cha
   lbEntry.count++;
   lbEntry.tag = user.username;
   leaderboard.set(userId, lbEntry);
+  savePanelData();
 
   // Schedule CD done notification
   if (cdNotifyUsers.has(userId)) scheduleCdNotify(userId, cooldownMs, user);
@@ -644,6 +670,7 @@ client.once("clientReady", async (c) => {
 
   // Load persisted panel data (subscribers, panelMessageId, etc.)
   loadPanelData();
+  loadStockHistory();
 
   // Post the generator panel
   await postOrUpdatePanel(c).catch(() => null);
@@ -903,6 +930,10 @@ client.on("messageCreate", async (message: Message) => {
     await handleStockLog(message);
   } else if (command === "transferstock") {
     await handleTransferStock(message, args[1], args[2], args[3]);
+  } else if (command === "stockhistory") {
+    await handleStockHistory(message);
+  } else if (command === "dsnipe") {
+    await handleDSnipe(message);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -1441,7 +1472,10 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         .setTimestamp();
 
       await interaction.update({ embeds: [embed], components: [] });
-      if (added > 0) await notifyRestock(tier, added);
+      if (added > 0) {
+        await notifyRestock(tier, added);
+        logStockHistory(tier, added);
+      }
     }
 
   } else if (interaction.isModalSubmit()) {
@@ -1768,6 +1802,7 @@ async function deliverAccount(
   lbEntry.count++;
   lbEntry.tag = message.author.username;
   leaderboard.set(message.author.id, lbEntry);
+  savePanelData();
 
   // Schedule CD done notification
   if (cdNotifyUsers.has(message.author.id)) scheduleCdNotify(message.author.id, cooldownMs, message.author);
@@ -2008,6 +2043,7 @@ async function handleSessionReply(message: Message) {
       addAccount(account);
     }
     await notifyRestock(tier as StockTier, 1);
+    logStockHistory(tier ?? "free", 1);
 
     const count =
       tier === "god" ? godStockCount()
@@ -3048,6 +3084,62 @@ async function checkSnipeUsername(username: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function handleStockHistory(message: Message) {
+  if (!isAdmin(message.author.id)) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")] });
+    return;
+  }
+  if (stockHistory.length === 0) {
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0xff9900).setTitle("📋 Stock History").setDescription("No stock additions have been recorded yet.")] });
+    return;
+  }
+  const last10 = [...stockHistory].reverse().slice(0, 10);
+  const lines = last10.map((e, i) => {
+    const label =
+      e.tier === "god"      ? "🌟 God"
+      : e.tier === "premium"  ? "⭐ Premium"
+      : e.tier === "agegroup" ? "🎂 Age Group"
+      : e.tier === "rare"     ? "💎 Rare"
+      : e.tier === "dump"     ? "🗑️ Dump"
+      : "🟢 Free";
+    return `\`${i + 1}.\` ${label} — **+${e.count}** account(s) · <t:${Math.floor(e.timestamp / 1000)}:R>`;
+  });
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("📋 Stock History — Last 10 Additions")
+        .setDescription(lines.join("\n"))
+        .setFooter({ text: "CoolGEN · Most recent first" })
+        .setTimestamp(),
+    ],
+  });
+}
+
+function generateDSnipeUsername(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz";
+  return Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+async function handleDSnipe(message: Message) {
+  const names = Array.from({ length: 10 }, generateDSnipeUsername);
+  const lines = names.map((n, i) => `\`${i + 1}.\` **${n}**`);
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("🎯 Discord Username Sniper")
+        .setDescription(
+          "Here are **10 random 5-letter Discord usernames** to try:\n\n" +
+          lines.join("\n") +
+          "\n\n> Check availability at **discord.com** or via the app when changing your username."
+        )
+        .setFooter({ text: "CoolGEN · Run again for a new batch" })
+        .setTimestamp(),
+    ],
+  });
 }
 
 async function handleSnipe(message: Message) {
