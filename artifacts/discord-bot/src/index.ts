@@ -170,8 +170,8 @@ function getSkipsUsed(userId: string): number {
 
 function getSkipLimit(hasGod: boolean, hasPremium: boolean): number {
   if (hasGod) return 5;
-  if (hasPremium) return 3;
-  return 2;
+  if (hasPremium) return 1;
+  return 1;
 }
 
 function useSkip(userId: string): void {
