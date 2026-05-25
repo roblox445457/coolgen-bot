@@ -933,7 +933,7 @@ client.on("messageCreate", async (message: Message) => {
   } else if (command === "stockhistory") {
     await handleStockHistory(message);
   } else if (command === "dsnipe") {
-    await handleDSnipe(message);
+    await handleDSnipe(message, args[1]);
   } else if (command === "help") {
     if (subcommand === "generate") {
       await handleHelpGenerate(message);
@@ -3123,7 +3123,72 @@ function generateDSnipeUsername(): string {
   return Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
-async function handleDSnipe(message: Message) {
+async function handleDSnipe(message: Message, startLetterRaw?: string) {
+  const startLetter = startLetterRaw?.toLowerCase().replace(/[^a-z]/g, "").charAt(0);
+
+  if (startLetter) {
+    // ── Premium + 15-day member gate ──────────────────────────────────────
+    const member = message.member ?? await message.guild?.members.fetch(message.author.id).catch(() => null);
+    const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+    const joinedAt = member?.joinedAt;
+    const daysSinceJoin = joinedAt ? (Date.now() - joinedAt.getTime()) / (1000 * 60 * 60 * 24) : 0;
+
+    if (!isAdmin(message.author.id)) {
+      if (!hasPremium) {
+        await message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("🔒 Premium Required")
+              .setDescription(
+                "Filtering by starting letter requires the **⭐ Premium** role.\n\n" +
+                "Use `j!dsnipe` without a letter for a free random batch."
+              ),
+          ],
+        });
+        return;
+      }
+      if (daysSinceJoin < 15) {
+        const daysLeft = Math.ceil(15 - daysSinceJoin);
+        await message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff9900)
+              .setTitle("⏳ Membership Too New")
+              .setDescription(
+                `You need to be a member for **15 days** to use prefix filtering.\n\n` +
+                `You joined **${Math.floor(daysSinceJoin)} day(s)** ago — come back in **${daysLeft} day(s)**.\n\n` +
+                `Use \`j!dsnipe\` without a letter for a free random batch.`
+              ),
+          ],
+        });
+        return;
+      }
+    }
+
+    // Generate 10 names starting with the given letter
+    const names = Array.from({ length: 10 }, () =>
+      startLetter + Array.from({ length: 4 }, () => "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)]).join("")
+    );
+    const lines = names.map((n, i) => `\`${i + 1}.\` **${n}**`);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xf5a623)
+          .setTitle(`🎯 Discord Username Sniper — Starting with "${startLetter.toUpperCase()}"`)
+          .setDescription(
+            `Here are **10 random 5-letter Discord usernames** starting with **\`${startLetter}\`**:\n\n` +
+            lines.join("\n") +
+            "\n\n> Check availability at **discord.com** or via the app."
+          )
+          .setFooter({ text: "CoolGEN Premium · Run again for a new batch" })
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  // ── Free mode: fully random ──────────────────────────────────────────────
   const names = Array.from({ length: 10 }, generateDSnipeUsername);
   const lines = names.map((n, i) => `\`${i + 1}.\` **${n}**`);
   await message.reply({
@@ -3134,7 +3199,8 @@ async function handleDSnipe(message: Message) {
         .setDescription(
           "Here are **10 random 5-letter Discord usernames** to try:\n\n" +
           lines.join("\n") +
-          "\n\n> Check availability at **discord.com** or via the app when changing your username."
+          "\n\n> 💡 **Premium members** can run `j!dsnipe <letter>` to filter by starting letter.\n" +
+          "> Check availability at **discord.com** or via the app."
         )
         .setFooter({ text: "CoolGEN · Run again for a new batch" })
         .setTimestamp(),
