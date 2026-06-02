@@ -132,7 +132,30 @@ export function rareStockCount(): number {
 
 // ── Dump stock ────────────────────────────────────────────────────────────────
 
-const DUMP_STOCK_FILE = join(__dirname, "../dump-stock.json");
+const DUMP_STOCK_FILE  = join(__dirname, "../dump-stock.json");
+const ELITE_STOCK_FILE = join(__dirname, "../elite-stock.json");
+
+// ── Elite stock ───────────────────────────────────────────────────────────────
+
+export function addEliteAccount(account: Account): void {
+  const accounts = loadFile(ELITE_STOCK_FILE);
+  accounts.push(account);
+  saveFile(ELITE_STOCK_FILE, accounts);
+}
+
+export function popEliteAccount(): Account | null {
+  const accounts = loadFile(ELITE_STOCK_FILE);
+  if (accounts.length === 0) return null;
+  const account = accounts.shift()!;
+  saveFile(ELITE_STOCK_FILE, accounts);
+  return account;
+}
+
+export function eliteStockCount(): number {
+  return loadFile(ELITE_STOCK_FILE).length;
+}
+
+export function getAllEliteAccounts(): Account[] { return loadFile(ELITE_STOCK_FILE); }
 
 export function addDumpAccount(account: Account): void {
   const accounts = loadFile(DUMP_STOCK_FILE);
@@ -170,6 +193,7 @@ const TIER_FILES: Record<string, string> = {
   agegroup: AGE_GROUP_STOCK_FILE,
   rare:     RARE_STOCK_FILE,
   dump:     DUMP_STOCK_FILE,
+  elite:    ELITE_STOCK_FILE,
 };
 
 export function transferAccounts(from: string, to: string, count: number): number {
