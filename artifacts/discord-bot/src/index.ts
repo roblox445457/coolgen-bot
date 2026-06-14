@@ -4926,13 +4926,22 @@
     try {
       await message.author.send({ embeds: [dmEmbed] });
       generateCooldowns.set(message.author.id, Date.now());
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0078f2)
-            .setDescription("✅ Your **Epic Games** account has been sent to your DMs!"),
-        ],
-      });
+
+      const member = await message.guild?.members.fetch(message.author.id).catch(() => null);
+      const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+      const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+      const tierBadge  = hasGod ? "CoolGEN God" : hasPremium ? "CoolGEN Premium" : "CoolGEN";
+      const cdEnd = Math.floor((Date.now() + GENERATE_COOLDOWN_MS) / 1000);
+
+      const channelEmbed = new EmbedBuilder()
+        .setColor(0x0078f2)
+        .setTitle("<:green:1508573751791321138> Epic Games Account Generated")
+        .setDescription(`Check your DMs for your account, ${message.author}!\n⏳ You can generate again <t:${cdEnd}:R>`)
+        .setThumbnail(EPIC_EMOJI_URL)
+        .setFooter({ text: tierBadge })
+        .setTimestamp();
+
+      await message.reply({ embeds: [channelEmbed] });
     } catch {
       addEpicAccount(account);
       await message.reply({
