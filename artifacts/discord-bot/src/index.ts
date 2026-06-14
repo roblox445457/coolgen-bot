@@ -905,6 +905,8 @@
   const SNIPE_AD_WINDOW_MS  = 60_000; // rolling window to count "recently"
   const SNIPE_AD_THRESHOLD  = 5;
 
+  let lastSnipeAdMsgId: string | null = null;
+
   async function maybeFireSnipeAd(): Promise<void> {
     const now = Date.now();
     // keep only timestamps within the window
@@ -920,6 +922,12 @@
 
     const url = process.env.DISCORD_WEBHOOK_URL2;
     if (!url) return;
+
+    // delete the previous snipe ad before posting the new one
+    if (lastSnipeAdMsgId) {
+      await axios.delete(`${url}/messages/${lastSnipeAdMsgId}`).catch(() => null);
+      lastSnipeAdMsgId = null;
+    }
 
     const body = {
       username: "coolgen :D",
@@ -945,12 +953,7 @@
 
     try {
       const res = await axios.post<{ id: string }>(url + "?wait=true", body);
-      const msgId = res.data?.id;
-      if (msgId) {
-        // delete the webhook message after 5 ms
-        await new Promise(r => setTimeout(r, 5));
-        await axios.delete(`${url}/messages/${msgId}`).catch(() => null);
-      }
+      lastSnipeAdMsgId = res.data?.id ?? null;
     } catch { /* ignore webhook errors */ }
   }
 
