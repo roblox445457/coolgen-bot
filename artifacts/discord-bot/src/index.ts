@@ -4803,28 +4803,21 @@
       return;
     }
 
-    const epicLogoPath = process.cwd() + "/epicgames.png";
-    let files: AttachmentBuilder[] = [];
-    let thumbnailValue: string | null = null;
-    try {
-      files = [new AttachmentBuilder(epicLogoPath, { name: "epicgames.png" })];
-      thumbnailValue = "attachment://epicgames.png";
-    } catch { /* logo missing — skip */ }
+    const EPIC_EMOJI_URL = "https://cdn.discordapp.com/emojis/1515096543366090893.png";
 
     const dmEmbed = new EmbedBuilder()
       .setColor(0x0078f2)
-      .setTitle("🎮 Your Epic Games Account")
+      .setTitle("<:fortnitestock:1515096543366090893> Your Epic Games Account")
       .addFields(
         { name: "📧 Email",    value: `\`${account.email}\``,    inline: true },
         { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
       )
       .setFooter({ text: "CoolGEN — Login at epicgames.com" })
+      .setThumbnail(EPIC_EMOJI_URL)
       .setTimestamp();
 
-    if (thumbnailValue) dmEmbed.setThumbnail(thumbnailValue);
-
     try {
-      await message.author.send({ embeds: [dmEmbed], files });
+      await message.author.send({ embeds: [dmEmbed] });
       await message.reply({
         embeds: [
           new EmbedBuilder()
