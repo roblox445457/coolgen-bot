@@ -18,6 +18,7 @@
     User,
     ButtonInteraction,
     MessageComponentInteraction,
+    GuildMember,
   } from "discord.js";
   import axios from "axios";
   import * as fs from "fs";
@@ -37,6 +38,10 @@
     addApiKeys, apiKeyPoolCount,
     redeemKey, resetHwid, setWebhook, getApiData,
   } from "./api-panel.js";
+  import {
+    EpicAccount,
+    addEpicAccount, popEpicAccount, epicStockCount, getAllEpicAccounts,
+  } from "./epicgames-stock.js";
 
   interface RobloxProfile {
     userId: number;
@@ -122,6 +127,7 @@
   const ELITE_ROLE_ID = "1510048850457661480";
   const STATUS_ROLE_ID = "1505227536379019444";
   const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/COOLGEN";
+  const HIT_CHANNEL_ID = "1495195956046594199";
 
   const client = new Client({
     intents: [
@@ -142,6 +148,50 @@
     password?: string;
   }
   const sessions = new Map<string, Session>();
+
+  // Pending posthit sessions: userId → hit data awaiting star rating
+  interface PendingHit {
+    userId: string;
+    username: string;
+    avatarUrl: string;
+    comment: string;
+    imageUrl: string | null;
+  }
+  const pendingHits = new Map<string, PendingHit>();
+
+  // Hit storage
+  interface HitEntry {
+    messageId: string;
+    userId: string;
+    username: string;
+    comment: string;
+    stars: number;
+    imageUrl: string | null;
+    timestamp: number;
+  }
+  const HIT_FILE = "hits.json";
+  const hitsById = new Map<string, HitEntry>();
+
+  function loadHits(): void {
+    try {
+      const raw = JSON.parse(fs.readFileSync(HIT_FILE, "utf-8")) as HitEntry[];
+      for (const h of raw) hitsById.set(h.messageId, h);
+    } catch { /* start fresh */ }
+  }
+
+  function saveHit(entry: HitEntry): void {
+    hitsById.set(entry.messageId, entry);
+    try {
+      fs.writeFileSync(HIT_FILE, JSON.stringify([...hitsById.values()], null, 2), "utf-8");
+    } catch { /* ignore */ }
+  }
+
+  // Pending addepicstock session
+  interface EpicSession {
+    step: "email" | "password";
+    email?: string;
+  }
+  const epicSessions = new Map<string, EpicSession>();
 
   // Locked stock tiers — users cannot generate from locked tiers
   const lockedStocks = new Set<"free" | "premium" | "god" | "agegroup" | "rare" | "dump" | "elite">();
@@ -583,7 +633,7 @@
       : tier === "agegroup" ? "🎂 Your Age Group Roblox Account"
       : tier === "rare"     ? "💎 Your Rare Username Roblox Account"
       : tier === "dump"     ? "🗑️ Your Dump Roblox Account"
-      : tier === "free"     ? "<:roblox:1508559403521933442> Your Roblox Account"
+      : tier === "elite"    ? "👑 Your Elite Roblox Account"
       : "<:roblox:1508559403521933442> Your Roblox Account";
 
     const color =
@@ -592,6 +642,7 @@
       : tier === "agegroup" ? 0x00bcd4
       : tier === "rare"     ? 0xffd700
       : tier === "dump"     ? 0xe74c3c
+      : tier === "elite"    ? 0xc0a000
       : 0x00c851;
 
     const dmEmbed = new EmbedBuilder()
@@ -685,6 +736,7 @@
     // Load persisted panel data (subscribers, panelMessageId, etc.)
     loadPanelData();
     loadStockHistory();
+    loadHits();
 
     // Post the generator panel
     await postOrUpdatePanel(c).catch(() => null);
@@ -810,9 +862,21 @@
     // Ignore all DMs — bot only responds in servers
     if (!message.guild) return;
 
+    // Auto-delete any non-bot message in the hit channel (only bot embeds stay)
+    if (message.channelId === HIT_CHANNEL_ID) {
+      await message.delete().catch(() => null);
+      return;
+    }
+
     // Handle active addstock session replies
     if (sessions.has(message.author.id)) {
       await handleSessionReply(message);
+      return;
+    }
+
+    // Handle active addepicstock session replies
+    if (epicSessions.has(message.author.id)) {
+      await handleEpicSessionReply(message);
       return;
     }
 
@@ -822,6 +886,7 @@
       "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","elitestock","allstocks",
       "lockstock","unlockstock","lockallstocks","unlockallstocks",
       "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","allsnipedaccs","setcooldown","help","fakestock","generatedump","exportaccounts","mystats","cd","whitelist","announce","clearcd","blacklist","stocklog","transferstock","stockhistory","dsnipe",
+      "posthit","generateepic","addepicstock","epicstock",
     ]);
 
     const lowerContent = message.content.toLowerCase().trim();
@@ -976,6 +1041,14 @@
       await handleStockHistory(message);
     } else if (command === "dsnipe") {
       await handleDSnipe(message, args[1]);
+    } else if (command === "posthit") {
+      await handlePostHit(message);
+    } else if (command === "generateepic") {
+      await handleGenerateEpic(message);
+    } else if (command === "addepicstock") {
+      await handleAddEpicStock(message);
+    } else if (command === "epicstock") {
+      await handleEpicStockCount(message);
     } else if (command === "help") {
       if (subcommand === "generate") {
         await handleHelpGenerate(message);
@@ -1052,9 +1125,10 @@
         await interaction.deferReply({ ephemeral: true });
         try {
           const wearingRes = await axios.get(
-            `https://avatar.roblox.com/v1/users/${targetUserId}/currently-wearing`
+            `https://avatar.roblox.com/v1/users/${targetUserId}/currently-wearing`,
+            { timeout: 8000 }
           );
-          const assetIds: number[] = wearingRes.data.assetIds ?? [];
+          const assetIds: number[] = wearingRes.data?.assetIds ?? [];
           if (assetIds.length === 0) {
             await interaction.editReply({
               embeds: [
@@ -1066,22 +1140,39 @@
             });
             return;
           }
-          const detailsRes = await axios.post(
-            "https://catalog.roblox.com/v1/catalog/items/details",
-            { items: assetIds.slice(0, 20).map((id: number) => ({ itemType: "Asset", id })) },
-            { headers: { "Content-Type": "application/json" } }
-          );
-          const items: { name: string; id: number }[] = detailsRes.data.data ?? [];
-          const itemList = items
-            .map((item) => `• [${item.name}](https://www.roblox.com/catalog/${item.id}/)`)
-            .join("\n") || "Could not load item names.";
+          const limitedIds = assetIds.slice(0, 10);
+          let items: { name: string; id: number }[] = [];
+          try {
+            const detailsRes = await axios.post(
+              "https://catalog.roblox.com/v1/catalog/items/details",
+              { items: limitedIds.map((id: number) => ({ itemType: "Asset", id })) },
+              { headers: { "Content-Type": "application/json" }, timeout: 8000 }
+            );
+            items = detailsRes.data?.data ?? [];
+          } catch {
+            // catalog API failed — fall back to raw asset IDs
+          }
+          let itemList: string;
+          if (items.length > 0) {
+            itemList = items
+              .map((item) => `• [${item.name}](https://www.roblox.com/catalog/${item.id}/)`)
+              .join("\n");
+          } else {
+            itemList = limitedIds
+              .map((id: number) => `• [Asset ${id}](https://www.roblox.com/catalog/${id}/)`)
+              .join("\n");
+          }
+          // Ensure description is within Discord's 4096-char limit
+          if (itemList.length > 3900) itemList = itemList.slice(0, 3900) + "\n…";
+          const totalShown = items.length > 0 ? items.length : limitedIds.length;
+          const totalNote = assetIds.length > 10 ? ` (showing first 10 of ${assetIds.length})` : "";
           await interaction.editReply({
             embeds: [
               new EmbedBuilder()
                 .setColor(0x5865f2)
                 .setTitle("🎨 Avatar Wearing")
                 .setDescription(itemList)
-                .setFooter({ text: `${items.length} item(s)` }),
+                .setFooter({ text: `${totalShown} item(s)${totalNote}` }),
             ],
           });
         } catch {
@@ -1434,6 +1525,81 @@
 
       } else if (id === "panel_help") {
         await interaction.reply({ embeds: [buildHelpTabEmbed("generate")], ephemeral: true });
+
+      } else if (id.startsWith("hit_stars:")) {
+        const stars = parseInt(id.split(":")[1] ?? "0");
+        const pending = pendingHits.get(userId);
+        if (!pending) {
+          await interaction.reply({ content: "❌ No pending hit found — it may have expired. Run `j!posthit` again.", ephemeral: true });
+          return;
+        }
+        pendingHits.delete(userId);
+
+        const hitChannel = await client.channels.fetch(HIT_CHANNEL_ID).catch(() => null) as TextChannel | null;
+        if (!hitChannel) {
+          await interaction.reply({ content: "❌ Hit channel not accessible.", ephemeral: true });
+          return;
+        }
+
+        const starsDisplay = "⭐".repeat(stars) + "☆".repeat(5 - stars);
+        const hitEmbed = new EmbedBuilder()
+          .setColor(0xffd700)
+          .setTitle("🎯 New Hit Posted!")
+          .setAuthor({ name: pending.username, iconURL: pending.avatarUrl })
+          .setDescription(pending.comment || "*(no comment)*")
+          .addFields(
+            { name: "⭐ Rating", value: `${starsDisplay}  **${stars}/5**`, inline: true },
+            { name: "👤 Posted by", value: `<@${pending.userId}>`, inline: true },
+          )
+          .setFooter({ text: "CoolGEN Hits · Click 💬 to add a comment" })
+          .setTimestamp();
+
+        if (pending.imageUrl) hitEmbed.setImage(pending.imageUrl);
+
+        const hitMsg = await hitChannel.send({ embeds: [hitEmbed], components: [] });
+
+        const commentRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`hit_comment:${hitMsg.id}`)
+            .setLabel("💬 Add Comment")
+            .setStyle(ButtonStyle.Primary),
+        );
+        await hitMsg.edit({ components: [commentRow] });
+
+        saveHit({
+          messageId: hitMsg.id,
+          userId: pending.userId,
+          username: pending.username,
+          comment: pending.comment,
+          stars,
+          imageUrl: pending.imageUrl,
+          timestamp: Date.now(),
+        });
+
+        await interaction.update({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x00c851)
+              .setTitle("✅ Hit Posted!")
+              .setDescription(`Your hit has been posted in <#${HIT_CHANNEL_ID}>!\n\n${starsDisplay} **${stars}/5 stars**`),
+          ],
+          components: [],
+        });
+
+      } else if (id.startsWith("hit_comment:")) {
+        const hitMsgId = id.split(":")[1];
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_hit_comment:${hitMsgId}`)
+          .setTitle("💬 Add a Comment");
+        const input = new TextInputBuilder()
+          .setCustomId("comment_text")
+          .setLabel("Your comment")
+          .setStyle(TextInputStyle.Paragraph)
+          .setMaxLength(500)
+          .setPlaceholder("Write your comment here…")
+          .setRequired(true);
+        modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+        await interaction.showModal(modal);
       }
 
     } else if (interaction.isStringSelectMenu()) {
@@ -1585,6 +1751,41 @@
 
     } else if (interaction.isModalSubmit()) {
       const id = interaction.customId;
+
+      if (id.startsWith("modal_hit_comment:")) {
+        const hitMsgId = id.split(":")[1];
+        const commentText = interaction.fields.getTextInputValue("comment_text").trim();
+        if (!commentText) {
+          await interaction.reply({ content: "❌ Comment cannot be empty.", ephemeral: true });
+          return;
+        }
+        const hitChannel = await client.channels.fetch(HIT_CHANNEL_ID).catch(() => null) as TextChannel | null;
+        if (!hitChannel) {
+          await interaction.reply({ content: "❌ Hit channel not accessible.", ephemeral: true });
+          return;
+        }
+
+        const hitEntry = hitsById.get(hitMsgId);
+        const member = interaction.member;
+        const avatarUrl = (member as GuildMember | null)?.displayAvatarURL?.() ?? interaction.user.displayAvatarURL();
+
+        const commentEmbed = new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle("💬 Comment on Hit")
+          .setAuthor({ name: interaction.user.username, iconURL: avatarUrl })
+          .setDescription(commentText)
+          .setFooter({ text: hitEntry ? `Hit by ${hitEntry.username}` : `Hit ID: ${hitMsgId}` })
+          .setTimestamp();
+
+        if (hitMsgId) {
+          const hitMsgLink = `https://discord.com/channels/${interaction.guildId}/${HIT_CHANNEL_ID}/${hitMsgId}`;
+          commentEmbed.addFields({ name: "🔗 Original Hit", value: `[Jump to hit](${hitMsgLink})`, inline: true });
+        }
+
+        await hitChannel.send({ embeds: [commentEmbed] });
+        await interaction.reply({ content: "✅ Your comment has been posted in the hit channel!", ephemeral: true });
+        return;
+      }
       const userId = interaction.user.id;
 
       if (id === "modal_redeem_key") {
@@ -1816,6 +2017,8 @@
         else if (tier === "premium") addPremiumAccount(account);
         else if (tier === "agegroup") addAgeGroupAccount(account);
         else if (tier === "rare") addRareAccount(account);
+        else if (tier === "dump") addDumpAccount(account);
+        else if (tier === "elite") addEliteAccount(account);
         else addAccount(account);
         await captchaMsg
           .edit({
@@ -1862,6 +2065,7 @@
       : tier === "agegroup" ? "🎂 Your Age Group Roblox Account"
       : tier === "rare"     ? "💎 Your Rare Username Roblox Account"
       : tier === "dump"     ? "🗑️ Your Dump Roblox Account"
+      : tier === "elite"    ? "👑 Your Elite Roblox Account"
       : "<:emoji:1508575300999581746> Your Roblox Account";
 
     const color =
@@ -1870,6 +2074,7 @@
       : tier === "agegroup" ? 0x00bcd4
       : tier === "rare"     ? 0xffd700
       : tier === "dump"     ? 0xe74c3c
+      : tier === "elite"    ? 0xc0a000
       : 0x00c851;
 
     const footer =
@@ -4532,6 +4737,213 @@
       ],
       files: [{ attachment: stream, name: filename }],
     });
+  }
+
+  // ─── j!posthit ───────────────────────────────────────────────────────────────
+  async function handlePostHit(message: Message) {
+    const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
+    // Comment is everything after "posthit"
+    const comment = args.slice(1).join(" ").trim();
+
+    // Grab first image attachment if present
+    const imageAttachment = message.attachments.find(
+      (a) => a.contentType?.startsWith("image/") ?? false
+    );
+    const imageUrl = imageAttachment?.url ?? null;
+
+    const member = message.member;
+    const avatarUrl = member?.displayAvatarURL?.() ?? message.author.displayAvatarURL();
+
+    const pending: PendingHit = {
+      userId: message.author.id,
+      username: message.author.username,
+      avatarUrl,
+      comment,
+      imageUrl,
+    };
+    pendingHits.set(message.author.id, pending);
+
+    // Clear pending hit after 5 minutes if no star is clicked
+    setTimeout(() => pendingHits.delete(message.author.id), 5 * 60 * 1000);
+
+    const starsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("hit_stars:1").setLabel("⭐ 1").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("hit_stars:2").setLabel("⭐ 2").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("hit_stars:3").setLabel("⭐ 3").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("hit_stars:4").setLabel("⭐ 4").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("hit_stars:5").setLabel("⭐ 5").setStyle(ButtonStyle.Success),
+    );
+
+    const previewEmbed = new EmbedBuilder()
+      .setColor(0xffd700)
+      .setTitle("🎯 Post a Hit — Select Your Star Rating")
+      .setDescription(comment || "*(no comment)*")
+      .setAuthor({ name: message.author.username, iconURL: avatarUrl })
+      .setFooter({ text: "Click a star rating to post your hit to the hit channel!" });
+
+    if (imageUrl) previewEmbed.setImage(imageUrl);
+
+    await message.reply({ embeds: [previewEmbed], components: [starsRow] });
+  }
+
+  // ─── j!generateepic ──────────────────────────────────────────────────────────
+  async function handleGenerateEpic(message: Message) {
+    if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
+
+    const account = popEpicAccount();
+    if (!account) {
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("❌ Epic Games Stock Empty")
+            .setColor(0xff4444)
+            .setDescription("There are no Epic Games accounts in stock right now. Check back later!"),
+        ],
+      });
+      return;
+    }
+
+    const epicLogoPath = process.cwd() + "/epicgames.png";
+    let files: AttachmentBuilder[] = [];
+    let thumbnailValue: string | null = null;
+    try {
+      files = [new AttachmentBuilder(epicLogoPath, { name: "epicgames.png" })];
+      thumbnailValue = "attachment://epicgames.png";
+    } catch { /* logo missing — skip */ }
+
+    const dmEmbed = new EmbedBuilder()
+      .setColor(0x0078f2)
+      .setTitle("🎮 Your Epic Games Account")
+      .addFields(
+        { name: "📧 Email",    value: `\`${account.email}\``,    inline: true },
+        { name: "🔑 Password", value: `\`${account.password}\``, inline: true },
+      )
+      .setFooter({ text: "CoolGEN — Login at epicgames.com" })
+      .setTimestamp();
+
+    if (thumbnailValue) dmEmbed.setThumbnail(thumbnailValue);
+
+    try {
+      await message.author.send({ embeds: [dmEmbed], files });
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0078f2)
+            .setDescription("✅ Your **Epic Games** account has been sent to your DMs!"),
+        ],
+      });
+    } catch {
+      // DMs closed — send ephemeral-style reply
+      const publicEmbed = new EmbedBuilder()
+        .setColor(0xff4444)
+        .setDescription("❌ I couldn't DM you. Please open your DMs and try again.");
+      // Return account to stock since delivery failed
+      addEpicAccount(account);
+      await message.reply({ embeds: [publicEmbed] });
+    }
+  }
+
+  // ─── j!addepicstock ───────────────────────────────────────────────────────────
+  async function handleAddEpicStock(message: Message) {
+    if (!isAdmin(message.author.id)) {
+      await message.reply({
+        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+      });
+      return;
+    }
+
+    // Format: j!addepicstock email:password  (or attach a .txt file)
+    let raw = "";
+    const attachment = message.attachments.find(a => a.name?.endsWith(".txt"));
+    if (attachment) {
+      try {
+        const res = await axios.get<string>(attachment.url, { responseType: "text" });
+        raw = res.data;
+      } catch {
+        await message.reply({
+          embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ Failed to download the attached file.")],
+        });
+        return;
+      }
+    } else {
+      raw = message.content.slice(PREFIX.length + "addepicstock".length).trim();
+    }
+
+    const lines = raw.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+    let added = 0;
+    const failed: string[] = [];
+
+    for (const line of lines) {
+      const parts = line.split(":");
+      if (parts.length >= 2) {
+        addEpicAccount({ email: parts[0].trim(), password: parts.slice(1).join(":").trim() });
+        added++;
+      } else {
+        failed.push(line);
+      }
+    }
+
+    const desc = [`✅ **${added}** Epic Games account(s) added.`];
+    if (failed.length) desc.push(`❌ **${failed.length}** line(s) skipped (bad format).`);
+
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(added > 0 ? 0x00c851 : 0xff4444)
+          .setTitle("📥 Epic Games Stock Added")
+          .setDescription(desc.join("\n"))
+          .setFooter({ text: `Total Epic stock: ${epicStockCount()}` })
+          .setTimestamp(),
+      ],
+    });
+  }
+
+  // ─── j!epicstock ─────────────────────────────────────────────────────────────
+  async function handleEpicStockCount(message: Message) {
+    if (!isAdmin(message.author.id)) {
+      await message.reply({
+        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
+      });
+      return;
+    }
+    const count = epicStockCount();
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0078f2)
+          .setTitle("🎮 Epic Games Stock")
+          .setDescription(`**${count}** Epic Games account(s) in stock.`)
+          .setTimestamp(),
+      ],
+    });
+  }
+
+  // ─── Epic session handler ─────────────────────────────────────────────────────
+  async function handleEpicSessionReply(message: Message) {
+    const session = epicSessions.get(message.author.id);
+    if (!session) return;
+
+    if (session.step === "email") {
+      const email = message.content.trim();
+      epicSessions.set(message.author.id, { step: "password", email });
+      await message.reply({
+        embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription("📧 Email saved. Now send the **password**:")],
+      });
+    } else if (session.step === "password") {
+      const password = message.content.trim();
+      const email = session.email!;
+      epicSessions.delete(message.author.id);
+      addEpicAccount({ email, password });
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x00c851)
+            .setTitle("✅ Epic Games Account Added")
+            .setDescription(`**Email:** \`${email}\`\n**Password:** \`${password}\``)
+            .setFooter({ text: `Total Epic stock: ${epicStockCount()}` }),
+        ],
+      });
+    }
   }
 
   const token = process.env.DISCORD_BOT_TOKEN;
