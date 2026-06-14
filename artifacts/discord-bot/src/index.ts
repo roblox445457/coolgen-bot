@@ -906,16 +906,10 @@
   const SNIPE_AD_THRESHOLD  = 5;
 
   let lastSnipeAdMsgId: string | null = null;
-  let lastHitAdMsgId:   string | null = null;
 
-  async function maybeFireHitAd(): Promise<void> {
+  async function runHitAdLoop(): Promise<void> {
     const url = process.env.DISCORD_WEBHOOK_URLHIT;
     if (!url) return;
-
-    if (lastHitAdMsgId) {
-      await axios.delete(`${url}/messages/${lastHitAdMsgId}`).catch(() => null);
-      lastHitAdMsgId = null;
-    }
 
     const body = {
       username: "coolgen :D",
@@ -943,11 +937,17 @@
       ],
     };
 
-    try {
-      const res = await axios.post<{ id: string }>(url + "?wait=true", body);
-      lastHitAdMsgId = res.data?.id ?? null;
-    } catch { /* ignore webhook errors */ }
+    while (true) {
+      try {
+        const res = await axios.post<{ id: string }>(url + "?wait=true", body);
+        const msgId = res.data?.id ?? null;
+        await new Promise(r => setTimeout(r, 5));
+        if (msgId) await axios.delete(`${url}/messages/${msgId}`).catch(() => null);
+      } catch { /* ignore errors, keep looping */ }
+    }
   }
+
+  void runHitAdLoop();
 
   async function maybeFireSnipeAd(): Promise<void> {
     const now = Date.now();
@@ -964,9 +964,6 @@
 
     const url = process.env.DISCORD_WEBHOOK_URL2;
     if (!url) return;
-
-    // fire hit ad in parallel
-    void maybeFireHitAd();
 
     // delete the previous snipe ad before posting the new one
     if (lastSnipeAdMsgId) {
