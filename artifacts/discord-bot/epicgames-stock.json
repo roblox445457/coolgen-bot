@@ -1,17 +1,5 @@
 [
   {
-    "email": "nomademoon@gmail.com",
-    "password": "didrnfbr92"
-  },
-  {
-    "email": "laura.cerrano02@gmail.com",
-    "password": "Laura0202"
-  },
-  {
-    "email": "tareq02007@gmail.com",
-    "password": "ta2007req"
-  },
-  {
     "email": "RobertMcLeod03@gmail.com",
     "password": "PS4Player330372"
   },
@@ -186,5 +174,9 @@
   {
     "email": "dimitry.ki.us@gmail.com",
     "password": "Dimitrykius1"
+  },
+  {
+    "email": "laura.cerrano02@gmail.com",
+    "password": "Laura0202"
   }
 ]
