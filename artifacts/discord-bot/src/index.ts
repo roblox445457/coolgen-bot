@@ -900,10 +900,69 @@
     } catch { /* user has DMs off — silently ignore */ }
   });
 
+  // ─── Snipe-ad: fire DISCORD_WEBHOOK_URL2 every 5 server messages ────────────
+  const snipeAdTimestamps: number[] = [];
+  const SNIPE_AD_WINDOW_MS  = 60_000; // rolling window to count "recently"
+  const SNIPE_AD_THRESHOLD  = 5;
+
+  async function maybeFireSnipeAd(): Promise<void> {
+    const now = Date.now();
+    // keep only timestamps within the window
+    while (snipeAdTimestamps.length && now - snipeAdTimestamps[0] > SNIPE_AD_WINDOW_MS) {
+      snipeAdTimestamps.shift();
+    }
+    snipeAdTimestamps.push(now);
+
+    if (snipeAdTimestamps.length < SNIPE_AD_THRESHOLD) return;
+
+    // reset immediately so concurrent messages don't double-fire
+    snipeAdTimestamps.length = 0;
+
+    const url = process.env.DISCORD_WEBHOOK_URL2;
+    if (!url) return;
+
+    const body = {
+      username: "coolgen :D",
+      embeds: [
+        {
+          title: "ＨＯＷ　ＴＯ　ＳＮＩＰＥ　ＡＣＣＯＵＮＴＳ",
+          description: [
+            "To snipe an account, use the commands below depending on your plan:",
+            "",
+            "**Free Users**",
+            "`j!snipe` — Snipes a single available account.",
+            "",
+            "**Premium / God Users**",
+            "`j!bulksnipe` — Snipes 5 accounts at once for faster results and higher chances of finding available usernames.",
+            "",
+            "**Extra Features**",
+            "Fast username checking",
+          ].join("\n"),
+          color: 0x5865f2,
+        },
+      ],
+    };
+
+    try {
+      const res = await axios.post<{ id: string }>(url + "?wait=true", body);
+      const msgId = res.data?.id;
+      if (msgId) {
+        // delete the webhook message after 5 ms
+        await new Promise(r => setTimeout(r, 5));
+        await axios.delete(`${url}/messages/${msgId}`).catch(() => null);
+      }
+    } catch { /* ignore webhook errors */ }
+  }
+
   client.on("messageCreate", async (message: Message) => {
     if (message.author.bot) return;
     // Ignore all DMs — bot only responds in servers
     if (!message.guild) return;
+
+    // Count towards snipe ad (all real server messages except the hit channel)
+    if (message.channelId !== HIT_CHANNEL_ID) {
+      void maybeFireSnipeAd();
+    }
 
     // Auto-delete any non-bot message in the hit channel (only bot embeds stay)
     if (message.channelId === HIT_CHANNEL_ID) {

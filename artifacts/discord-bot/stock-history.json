@@ -1,10 +1,5 @@
 [
   {
-    "tier": "free",
-    "count": 17,
-    "timestamp": 1779748452922
-  },
-  {
     "tier": "premium",
     "count": 1,
     "timestamp": 1779760641541
@@ -248,5 +243,10 @@
     "tier": "premium",
     "count": 38,
     "timestamp": 1781450457804
+  },
+  {
+    "tier": "elite",
+    "count": 1,
+    "timestamp": 1781456630389
   }
 ]
