@@ -4945,4 +4945,13 @@
     process.exit(1);
   }
 
+  // Cleanly disconnect on shutdown so tsx watch doesn't leave a stale gateway
+  // connection alive alongside the restarted process (which causes duplicate responses).
+  const shutdown = () => {
+    client.destroy();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
   client.login(token);
