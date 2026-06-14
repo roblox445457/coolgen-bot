@@ -223,6 +223,7 @@
   const ageGroupCooldowns = new Map<string, number>();
   const bulkGenCooldowns = new Map<string, number>();
   const bulkGenDumpCooldowns = new Map<string, number>();
+  const bulkEpicCooldowns = new Map<string, number>();
   const bulkSnipeCooldowns = new Map<string, number>();
 
   // Whitelist — users who bypass all cooldowns AND can use admin commands
@@ -380,6 +381,7 @@
     timeoutHandle: ReturnType<typeof setTimeout>;
     panelCtx?: { channelId: string; userId: string };
     panelInteraction?: MessageComponentInteraction;
+    epicAccount?: EpicAccount;
   }
   const pendingCaptchas = new Map<string, PendingCaptcha>();
 
@@ -927,7 +929,7 @@
       "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","elitestock","allstocks",
       "lockstock","unlockstock","lockallstocks","unlockallstocks",
       "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","allsnipedaccs","setcooldown","help","fakestock","generatedump","exportaccounts","mystats","cd","whitelist","announce","clearcd","blacklist","stocklog","transferstock","stockhistory","dsnipe",
-      "generateepic","addepicstock","epicstock",
+      "generateepic","addepicstock","epicstock","bulkepic",
     ]);
 
     const lowerContent = message.content.toLowerCase().trim();
@@ -1084,6 +1086,8 @@
       await handleDSnipe(message, args[1]);
     } else if (command === "generateepic") {
       await handleGenerateEpic(message);
+    } else if (command === "bulkepic") {
+      await handleBulkEpic(message);
     } else if (command === "addepicstock") {
       await handleAddEpicStock(message);
     } else if (command === "epicstock") {
@@ -1389,13 +1393,17 @@
 
         if (id === pending.correctColor) {
           await interaction.deferUpdate().catch(() => null);
-          if (pending.panelCtx) {
+          if (pending.epicAccount) {
+            await deliverEpicAccount(pending.epicAccount, pending.originalMessage!);
+          } else if (pending.panelCtx) {
             await deliverAccountFromPanelCtx(pending.account, pending.tier, pending.panelCtx.channelId, pending.panelCtx.userId, pending.panelInteraction);
           } else {
             await deliverAccount(pending.account, pending.tier, pending.originalMessage!);
           }
         } else {
-          if (pending.tier === "god") addGodAccount(pending.account);
+          if (pending.epicAccount) {
+            addEpicAccount(pending.epicAccount);
+          } else if (pending.tier === "god") addGodAccount(pending.account);
           else if (pending.tier === "premium") addPremiumAccount(pending.account);
           else if (pending.tier === "agegroup") addAgeGroupAccount(pending.account);
           else if (pending.tier === "rare") addRareAccount(pending.account);
@@ -2058,8 +2066,11 @@
 
     const timeoutHandle = setTimeout(async () => {
       if (pendingCaptchas.has(message.author.id)) {
+        const timedOut = pendingCaptchas.get(message.author.id)!;
         pendingCaptchas.delete(message.author.id);
-        if (tier === "god") addGodAccount(account);
+        if (timedOut.epicAccount) {
+          addEpicAccount(timedOut.epicAccount);
+        } else if (tier === "god") addGodAccount(account);
         else if (tier === "premium") addPremiumAccount(account);
         else if (tier === "agegroup") addAgeGroupAccount(account);
         else if (tier === "rare") addRareAccount(account);
@@ -4201,6 +4212,7 @@
     ageGroupCooldowns.delete(targetId);
     bulkGenCooldowns.delete(targetId);
     bulkGenDumpCooldowns.delete(targetId);
+    bulkEpicCooldowns.delete(targetId);
     bulkSnipeCooldowns.delete(targetId);
     const target = await client.users.fetch(targetId).catch(() => null);
     const name = target ? target.username : `\`${targetId}\``;
@@ -4849,6 +4861,55 @@
       return;
     }
 
+    await sendEpicCaptcha(message, account);
+  }
+
+  async function sendEpicCaptcha(message: Message, account: EpicAccount) {
+    const correct = CAPTCHA_COLORS[Math.floor(Math.random() * CAPTCHA_COLORS.length)];
+
+    const captchaMsg = await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0078f2)
+          .setTitle("🛡️ Human Verification")
+          .setDescription(
+            `To receive your Epic Games account, click the **${correct.emoji} ${correct.label}** button below.\n\n⏰ You have **30 seconds** to respond.`
+          )
+          .setFooter({ text: "Wrong answer or timeout returns the account to stock." }),
+      ],
+      components: [captchaRow()],
+    });
+
+    const timeoutHandle = setTimeout(async () => {
+      if (pendingCaptchas.has(message.author.id)) {
+        pendingCaptchas.delete(message.author.id);
+        addEpicAccount(account);
+        await captchaMsg
+          .edit({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0xff4444)
+                .setTitle("⏰ Verification Timed Out")
+                .setDescription("You didn't respond in time. The account was returned to stock."),
+            ],
+            components: [],
+          })
+          .catch(() => null);
+        setTimeout(() => captchaMsg.delete().catch(() => null), 5_000);
+      }
+    }, 30_000);
+
+    pendingCaptchas.set(message.author.id, {
+      account: { username: "", password: "" } as Account,
+      epicAccount: account,
+      tier: "free",
+      correctColor: correct.id,
+      originalMessage: message,
+      timeoutHandle,
+    });
+  }
+
+  async function deliverEpicAccount(account: EpicAccount, message: Message) {
     const EPIC_EMOJI_URL = "https://cdn.discordapp.com/emojis/1515096543366090893.png";
 
     const dmEmbed = new EmbedBuilder()
@@ -4873,13 +4934,14 @@
         ],
       });
     } catch {
-      // DMs closed — send ephemeral-style reply
-      const publicEmbed = new EmbedBuilder()
-        .setColor(0xff4444)
-        .setDescription("❌ I couldn't DM you. Please open your DMs and try again.");
-      // Return account to stock since delivery failed
       addEpicAccount(account);
-      await message.reply({ embeds: [publicEmbed] });
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setDescription("❌ I couldn't DM you. Please open your DMs and try again."),
+        ],
+      });
     }
   }
 
@@ -4956,6 +5018,126 @@
           .setTimestamp(),
       ],
     });
+  }
+
+  // ─── j!bulkepic ───────────────────────────────────────────────────────────────
+  async function handleBulkEpic(message: Message) {
+    if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
+
+    const last = bulkEpicCooldowns.get(message.author.id);
+    if (last) {
+      const remaining = BULK_GEN_COOLDOWN_MS - (Date.now() - last);
+      if (remaining > 0) {
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.ceil((remaining % 60000) / 1000);
+        await message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("⏳ Cooldown Active")
+              .setDescription(`You must wait **${mins}m ${secs}s** before using \`j!bulkepic\` again.`),
+          ],
+        });
+        return;
+      }
+    }
+
+    const member = await message.guild!.members.fetch(message.author.id).catch(() => null);
+    const hasGod     = member?.roles.cache.has(GOD_ROLE_ID) ?? false;
+    const hasPremium = member?.roles.cache.has(PREMIUM_ROLE_ID) ?? false;
+
+    const limit = hasGod ? 10 : hasPremium ? 6 : 4;
+    const tierLabel = hasGod ? "🌟 God" : hasPremium ? "⭐ Premium" : "🟢 Free";
+
+    // Free-tier users must have the required status and be online
+    if (!hasGod && !hasPremium) {
+      const presence = member?.presence;
+      const isOnline = presence?.status === "online";
+      const customStatus = presence?.activities.find(a => a.type === 4)?.state ?? "";
+      const hasStatus = customStatus.includes(REQUIRED_STATUS);
+      if (!isOnline || !hasStatus) {
+        await message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0xff4444)
+              .setTitle("❌ Status Requirement Not Met")
+              .setDescription(
+                "To use `j!bulkepic` on the **Free** tier you must:\n\n" +
+                `**1.** Set your Discord custom status to:\n\`\`\`${REQUIRED_STATUS}\`\`\`` +
+                "**2.** Be **Online** (not idle, DND, or offline)\n\n" +
+                "⭐ Upgrade to **Premium** or **God** to skip this requirement."
+              ),
+          ],
+        });
+        return;
+      }
+    }
+
+    const available = epicStockCount();
+    if (available === 0) {
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("❌ Epic Games Stock Empty")
+            .setColor(0xff4444)
+            .setDescription("There are no Epic Games accounts in stock right now. Check back later!"),
+        ],
+      });
+      return;
+    }
+
+    const toSend = Math.min(limit, available);
+    const accounts: EpicAccount[] = [];
+    for (let i = 0; i < toSend; i++) {
+      const acc = popEpicAccount();
+      if (acc) accounts.push(acc);
+    }
+
+    bulkEpicCooldowns.set(message.author.id, Date.now());
+    const cdEnd = Math.floor((Date.now() + BULK_GEN_COOLDOWN_MS) / 1000);
+
+    const EPIC_EMOJI_URL = "https://cdn.discordapp.com/emojis/1515096543366090893.png";
+
+    try {
+      for (let i = 0; i < accounts.length; i++) {
+        const acc = accounts[i];
+        const dmEmbed = new EmbedBuilder()
+          .setColor(0x0078f2)
+          .setTitle(`<:fortnitestock:1515096543366090893> Epic Account ${i + 1} of ${accounts.length}`)
+          .addFields(
+            { name: "📧 Email",    value: `\`${acc.email}\``,    inline: true },
+            { name: "🔑 Password", value: `\`${acc.password}\``, inline: true },
+          )
+          .setFooter({ text: "CoolGEN Bulk Epic — Login at epicgames.com" })
+          .setThumbnail(EPIC_EMOJI_URL)
+          .setTimestamp();
+        await message.author.send({ embeds: [dmEmbed] });
+      }
+
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0078f2)
+            .setTitle("<:fortnitestock:1515096543366090893> Bulk Epic Complete")
+            .setDescription(
+              `${message.author} — **${accounts.length}** Epic Games account(s) sent to your DMs!\n` +
+              `${tierLabel} tier · ⏳ You can bulk epic again <t:${cdEnd}:R>`
+            )
+            .setTimestamp(),
+        ],
+      });
+    } catch {
+      for (const acc of accounts) addEpicAccount(acc);
+      bulkEpicCooldowns.delete(message.author.id);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xff4444)
+            .setTitle("❌ DMs Closed")
+            .setDescription("I couldn't DM you. Please open your DMs and try again.\n\nYour accounts were returned to stock."),
+        ],
+      });
+    }
   }
 
   // ─── Epic session handler ─────────────────────────────────────────────────────
