@@ -19,6 +19,10 @@
     ButtonInteraction,
     MessageComponentInteraction,
     GuildMember,
+    SlashCommandBuilder,
+    ChatInputCommandInteraction,
+    REST,
+    Routes,
   } from "discord.js";
   import axios from "axios";
   import * as fs from "fs";
@@ -129,6 +133,12 @@
   const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/COOLGEN";
   const HIT_CHANNEL_ID = "1495195956046594199";
 
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error("DISCORD_BOT_TOKEN is not set.");
+    process.exit(1);
+  }
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -139,6 +149,12 @@
       GatewayIntentBits.GuildMembers,
     ],
   });
+
+  // Cleanly disconnect on shutdown so tsx watch doesn't leave a stale gateway
+  // connection alive alongside the restarted process (which causes duplicate responses).
+  const shutdown = () => { client.destroy(); process.exit(0); };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   // Track active addstock sessions: userId -> step + collected data
   interface Session {
@@ -738,6 +754,31 @@
     loadStockHistory();
     loadHits();
 
+    // Register /posthit guild slash command
+    if (HOME_GUILD_ID) {
+      try {
+        const posthitCmd = new SlashCommandBuilder()
+          .setName("posthit")
+          .setDescription("Post a hit to the hit channel with a star rating")
+          .addStringOption(o =>
+            o.setName("comment").setDescription("Comment to include with your hit").setRequired(false)
+          )
+          .addAttachmentOption(o =>
+            o.setName("image").setDescription("Screenshot of the hit").setRequired(false)
+          )
+          .toJSON();
+
+        const rest = new REST({ version: "10" }).setToken(token!);
+        await rest.put(
+          Routes.applicationGuildCommands(c.user.id, HOME_GUILD_ID),
+          { body: [posthitCmd] },
+        );
+        console.log("Registered /posthit guild slash command.");
+      } catch (err) {
+        console.error("Failed to register slash commands:", err);
+      }
+    }
+
     // Post the generator panel
     await postOrUpdatePanel(c).catch(() => null);
   });
@@ -886,7 +927,7 @@
       "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","elitestock","allstocks",
       "lockstock","unlockstock","lockallstocks","unlockallstocks",
       "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","allsnipedaccs","setcooldown","help","fakestock","generatedump","exportaccounts","mystats","cd","whitelist","announce","clearcd","blacklist","stocklog","transferstock","stockhistory","dsnipe",
-      "posthit","generateepic","addepicstock","epicstock",
+      "generateepic","addepicstock","epicstock",
     ]);
 
     const lowerContent = message.content.toLowerCase().trim();
@@ -1041,8 +1082,6 @@
       await handleStockHistory(message);
     } else if (command === "dsnipe") {
       await handleDSnipe(message, args[1]);
-    } else if (command === "posthit") {
-      await handlePostHit(message);
     } else if (command === "generateepic") {
       await handleGenerateEpic(message);
     } else if (command === "addepicstock") {
@@ -1059,6 +1098,13 @@
   });
 
   client.on("interactionCreate", async (interaction: Interaction) => {
+    if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === "posthit") {
+        await handlePostHitSlash(interaction);
+      }
+      return;
+    }
+
     if (interaction.isButton()) {
       const id = interaction.customId;
       const userId = interaction.user.id;
@@ -4739,32 +4785,26 @@
     });
   }
 
-  // ─── j!posthit ───────────────────────────────────────────────────────────────
-  async function handlePostHit(message: Message) {
-    const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
-    // Comment is everything after "posthit"
-    const comment = args.slice(1).join(" ").trim();
-
-    // Grab first image attachment if present
-    const imageAttachment = message.attachments.find(
-      (a) => a.contentType?.startsWith("image/") ?? false
-    );
+  // ─── /posthit slash command ───────────────────────────────────────────────────
+  async function handlePostHitSlash(interaction: ChatInputCommandInteraction) {
+    const comment = interaction.options.getString("comment") ?? "";
+    const imageAttachment = interaction.options.getAttachment("image");
     const imageUrl = imageAttachment?.url ?? null;
 
-    const member = message.member;
-    const avatarUrl = member?.displayAvatarURL?.() ?? message.author.displayAvatarURL();
+    const member = interaction.member as GuildMember | null;
+    const avatarUrl = member?.displayAvatarURL?.() ?? interaction.user.displayAvatarURL();
 
     const pending: PendingHit = {
-      userId: message.author.id,
-      username: message.author.username,
+      userId: interaction.user.id,
+      username: interaction.user.username,
       avatarUrl,
       comment,
       imageUrl,
     };
-    pendingHits.set(message.author.id, pending);
+    pendingHits.set(interaction.user.id, pending);
 
     // Clear pending hit after 5 minutes if no star is clicked
-    setTimeout(() => pendingHits.delete(message.author.id), 5 * 60 * 1000);
+    setTimeout(() => pendingHits.delete(interaction.user.id), 5 * 60 * 1000);
 
     const starsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("hit_stars:1").setLabel("⭐ 1").setStyle(ButtonStyle.Secondary),
@@ -4778,12 +4818,12 @@
       .setColor(0xffd700)
       .setTitle("🎯 Post a Hit — Select Your Star Rating")
       .setDescription(comment || "*(no comment)*")
-      .setAuthor({ name: message.author.username, iconURL: avatarUrl })
+      .setAuthor({ name: interaction.user.username, iconURL: avatarUrl })
       .setFooter({ text: "Click a star rating to post your hit to the hit channel!" });
 
     if (imageUrl) previewEmbed.setImage(imageUrl);
 
-    await message.reply({ embeds: [previewEmbed], components: [starsRow] });
+    await interaction.reply({ embeds: [previewEmbed], components: [starsRow], ephemeral: true });
   }
 
   // ─── j!generateepic ──────────────────────────────────────────────────────────
@@ -4938,20 +4978,5 @@
       });
     }
   }
-
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) {
-    console.error("DISCORD_BOT_TOKEN is not set.");
-    process.exit(1);
-  }
-
-  // Cleanly disconnect on shutdown so tsx watch doesn't leave a stale gateway
-  // connection alive alongside the restarted process (which causes duplicate responses).
-  const shutdown = () => {
-    client.destroy();
-    process.exit(0);
-  };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
 
   client.login(token);
