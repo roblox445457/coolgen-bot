@@ -1,86 +1,6 @@
 [
   {
     "tier": "free",
-    "count": 30,
-    "timestamp": 1779723247683
-  },
-  {
-    "tier": "free",
-    "count": 15,
-    "timestamp": 1779726008661
-  },
-  {
-    "tier": "premium",
-    "count": 6,
-    "timestamp": 1779726804119
-  },
-  {
-    "tier": "free",
-    "count": 9,
-    "timestamp": 1779727084718
-  },
-  {
-    "tier": "free",
-    "count": 8,
-    "timestamp": 1779729140432
-  },
-  {
-    "tier": "god",
-    "count": 1,
-    "timestamp": 1779734370446
-  },
-  {
-    "tier": "premium",
-    "count": 3,
-    "timestamp": 1779734509774
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779739049074
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779739226428
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779739433224
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779739785641
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779739929459
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779742086638
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779742729629
-  },
-  {
-    "tier": "free",
-    "count": 1,
-    "timestamp": 1779743456780
-  },
-  {
-    "tier": "god",
-    "count": 1,
-    "timestamp": 1779743493065
-  },
-  {
-    "tier": "free",
     "count": 17,
     "timestamp": 1779748452922
   },
@@ -198,5 +118,135 @@
     "tier": "free",
     "count": 32,
     "timestamp": 1780347048470
+  },
+  {
+    "tier": "elite",
+    "count": 1,
+    "timestamp": 1780435180068
+  },
+  {
+    "tier": "elite",
+    "count": 2,
+    "timestamp": 1780435860609
+  },
+  {
+    "tier": "elite",
+    "count": 1,
+    "timestamp": 1780435982437
+  },
+  {
+    "tier": "elite",
+    "count": 4,
+    "timestamp": 1780522133509
+  },
+  {
+    "tier": "free",
+    "count": 15,
+    "timestamp": 1780524032649
+  },
+  {
+    "tier": "free",
+    "count": 50,
+    "timestamp": 1780524232250
+  },
+  {
+    "tier": "free",
+    "count": 200,
+    "timestamp": 1780693714605
+  },
+  {
+    "tier": "free",
+    "count": 50,
+    "timestamp": 1780953867910
+  },
+  {
+    "tier": "premium",
+    "count": 7,
+    "timestamp": 1780953928543
+  },
+  {
+    "tier": "rare",
+    "count": 39,
+    "timestamp": 1780954843666
+  },
+  {
+    "tier": "free",
+    "count": 644,
+    "timestamp": 1781230023772
+  },
+  {
+    "tier": "free",
+    "count": 50,
+    "timestamp": 1781232950548
+  },
+  {
+    "tier": "god",
+    "count": 1,
+    "timestamp": 1781233547443
+  },
+  {
+    "tier": "rare",
+    "count": 51,
+    "timestamp": 1781277393817
+  },
+  {
+    "tier": "free",
+    "count": 210,
+    "timestamp": 1781277540100
+  },
+  {
+    "tier": "free",
+    "count": 104,
+    "timestamp": 1781285610464
+  },
+  {
+    "tier": "free",
+    "count": 200,
+    "timestamp": 1781292634593
+  },
+  {
+    "tier": "god",
+    "count": 1,
+    "timestamp": 1781323688574
+  },
+  {
+    "tier": "free",
+    "count": 1000,
+    "timestamp": 1781360448531
+  },
+  {
+    "tier": "free",
+    "count": 125,
+    "timestamp": 1781364068477
+  },
+  {
+    "tier": "free",
+    "count": 120,
+    "timestamp": 1781365166780
+  },
+  {
+    "tier": "god",
+    "count": 1,
+    "timestamp": 1781366543981
+  },
+  {
+    "tier": "god",
+    "count": 1,
+    "timestamp": 1781366861389
+  },
+  {
+    "tier": "god",
+    "count": 1,
+    "timestamp": 1781366943988
+  },
+  {
+    "tier": "free",
+    "count": 13,
+    "timestamp": 1781395325940
+  },
+  {
+    "tier": "premium",
+    "count": 38,
+    "timestamp": 1781450457804
   }
 ]

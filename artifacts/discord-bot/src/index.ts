@@ -121,7 +121,7 @@
   const GOD_ROLE_ID = "1499806905697042492";
   const ELITE_ROLE_ID = "1510048850457661480";
   const STATUS_ROLE_ID = "1505227536379019444";
-  const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/KzGC6wksRk";
+  const REQUIRED_STATUS = "BEST ACCOUNT GEN : https://discord.gg/COOLGEN";
 
   const client = new Client({
     intents: [
@@ -180,7 +180,7 @@
   }
 
   function getSkipLimit(hasGod: boolean, hasPremium: boolean): number {
-    if (hasGod) return 5;
+    if (hasGod) return 1;
     if (hasPremium) return 1;
     return 1;
   }
@@ -584,7 +584,7 @@
       : tier === "rare"     ? "💎 Your Rare Username Roblox Account"
       : tier === "dump"     ? "🗑️ Your Dump Roblox Account"
       : tier === "free"     ? "<:roblox:1508559403521933442> Your Roblox Account"
-      : "🎮 Your Roblox Account";
+      : "<:roblox:1508559403521933442> Your Roblox Account";
 
     const color =
       tier === "god"      ? 0x9b59b6
@@ -795,7 +795,7 @@
             .setDescription(
               `Hey **${member.user.username}**, seems you're new here!\n\n` +
               `🟢 Use \`j!generate\` to get a free Roblox account.\n` +
-              `🗑️ If free stock is off, try \`j!generatedump\` instead.\n\n` +
+              `🗑️ If free stock is off, try \`j!generatedump\` or \`j!bulkgendump\` instead.\n\n` +
               `📋 Type \`j!help\` to see all available commands.`
             )
             .setFooter({ text: "CoolGEN · Enjoy your stay!" })
