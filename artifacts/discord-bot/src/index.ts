@@ -4830,6 +4830,12 @@
   async function handleGenerateEpic(message: Message) {
     if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
 
+    const remaining = checkCooldown(message.author.id);
+    if (remaining !== null) {
+      await replyCooldownMsg(message, remaining);
+      return;
+    }
+
     const account = popEpicAccount();
     if (!account) {
       await message.reply({
@@ -4858,6 +4864,7 @@
 
     try {
       await message.author.send({ embeds: [dmEmbed] });
+      generateCooldowns.set(message.author.id, Date.now());
       await message.reply({
         embeds: [
           new EmbedBuilder()
