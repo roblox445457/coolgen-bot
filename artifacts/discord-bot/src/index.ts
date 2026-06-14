@@ -907,48 +907,6 @@
 
   let lastSnipeAdMsgId: string | null = null;
 
-  async function runHitAdLoop(): Promise<void> {
-    const url = process.env.DISCORD_WEBHOOK_URLHIT;
-    if (!url) return;
-
-    const body = {
-      username: "coolgen :D",
-      embeds: [
-        {
-          title: "ＨＯＷ　ＴＯ　ＰＯＳＴ　Ａ　ＨＩＴ",
-          description: [
-            "Found a good account? Show it off in the hit channel!",
-            "",
-            "**Step 1**",
-            "Use `/posthit` and fill in the account details.",
-            "",
-            "**Step 2**",
-            "Pick a star rating (1–5 ⭐) to rate the hit.",
-            "",
-            "**Step 3**",
-            "Your hit gets posted in the hit channel for everyone to see!",
-            "",
-            "**Extra**",
-            "Other members can leave a comment on your hit.",
-            "coolgen :D",
-          ].join("\n"),
-          color: 0xf5a623,
-        },
-      ],
-    };
-
-    while (true) {
-      try {
-        const res = await axios.post<{ id: string }>(url + "?wait=true", body);
-        const msgId = res.data?.id ?? null;
-        await new Promise(r => setTimeout(r, 5));
-        if (msgId) await axios.delete(`${url}/messages/${msgId}`).catch(() => null);
-      } catch { /* ignore errors, keep looping */ }
-    }
-  }
-
-  void runHitAdLoop();
-
   async function maybeFireSnipeAd(): Promise<void> {
     const now = Date.now();
     // keep only timestamps within the window
@@ -1009,9 +967,11 @@
       void maybeFireSnipeAd();
     }
 
-    // Auto-delete any non-bot message in the hit channel (only bot embeds stay)
+    // Auto-delete any non-bot message in the hit channel — admins are exempt
     if (message.channelId === HIT_CHANNEL_ID) {
-      await message.delete().catch(() => null);
+      if (!isAdmin(message.author.id)) {
+        await message.delete().catch(() => null);
+      }
       return;
     }
 
