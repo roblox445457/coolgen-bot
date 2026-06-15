@@ -993,7 +993,7 @@
       "stock","premiumstock","godstock","agegroupstock","rarestock","dumpstock","elitestock","allstocks",
       "lockstock","unlockstock","lockallstocks","unlockallstocks",
       "showapipanel","addapikeys","user","accountdays","bulkgen","bulkgendump","snipe","bulksnipe","allsnipedaccs","setcooldown","help","fakestock","generatedump","exportaccounts","mystats","cd","whitelist","announce","clearcd","blacklist","stocklog","transferstock","stockhistory","dsnipe",
-      "generateepic","addepicstock","epicstock","bulkepic",
+      "generateepic","addepicstock","epicstock","bulkgenepicaccs",
     ]);
 
     const lowerContent = message.content.toLowerCase().trim();
@@ -1150,7 +1150,7 @@
       await handleDSnipe(message, args[1]);
     } else if (command === "generateepic") {
       await handleGenerateEpic(message);
-    } else if (command === "bulkepic") {
+    } else if (command === "bulkgenepicaccs") {
       await handleBulkEpic(message);
     } else if (command === "addepicstock") {
       await handleAddEpicStock(message);
@@ -1679,7 +1679,8 @@
         const commentRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
             .setCustomId(`hit_comment:${hitMsg.id}`)
-            .setLabel("💬 Add Comment")
+            .setLabel("Add Comment")
+            .setEmoji({ id: "1508573751791321138", name: "green" })
             .setStyle(ButtonStyle.Primary),
         );
         await hitMsg.edit({ components: [commentRow] });
@@ -1691,7 +1692,7 @@
           comment: pending.comment,
           stars,
           imageUrl: pending.imageUrl,
-          timestamp: Date.now(),
+        timestamp: Date.now(),
         });
 
         await interaction.update({
@@ -5075,25 +5076,18 @@
 
   // ─── j!epicstock ─────────────────────────────────────────────────────────────
   async function handleEpicStockCount(message: Message) {
-    if (!isAdmin(message.author.id)) {
-      await message.reply({
-        embeds: [new EmbedBuilder().setColor(0xff4444).setDescription("❌ You don't have permission to use this command.")],
-      });
-      return;
-    }
     const count = epicStockCount();
     await message.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(0x0078f2)
-          .setTitle("🎮 Epic Games Stock")
-          .setDescription(`**${count}** Epic Games account(s) in stock.`)
+          .setDescription(`<:fortnitestock:1515096543366090893> **Epic Stock:** \`${count}\` account(s) available`)
           .setTimestamp(),
       ],
     });
   }
 
-  // ─── j!bulkepic ───────────────────────────────────────────────────────────────
+  // ─── j!bulkgenepicaccs ────────────────────────────────────────────────────────
   async function handleBulkEpic(message: Message) {
     if (blacklistedUsers.has(message.author.id)) { await replyBlacklisted(message); return; }
 
@@ -5108,7 +5102,7 @@
             new EmbedBuilder()
               .setColor(0xff4444)
               .setTitle("⏳ Cooldown Active")
-              .setDescription(`You must wait **${mins}m ${secs}s** before using \`j!bulkepic\` again.`),
+              .setDescription(`You must wait **${mins}m ${secs}s** before using \`j!bulkgenepicaccs\` again.`),
           ],
         });
         return;
@@ -5135,7 +5129,7 @@
               .setColor(0xff4444)
               .setTitle("❌ Status Requirement Not Met")
               .setDescription(
-                "To use `j!bulkepic` on the **Free** tier you must:\n\n" +
+                "To use `j!bulkgenepicaccs` on the **Free** tier you must:\n\n" +
                 `**1.** Set your Discord custom status to:\n\`\`\`${REQUIRED_STATUS}\`\`\`` +
                 "**2.** Be **Online** (not idle, DND, or offline)\n\n" +
                 "⭐ Upgrade to **Premium** or **God** to skip this requirement."
