@@ -1,0 +1,14 @@
+kind = "worker"
+title = "Discord Bot"
+version = "1.0.0"
+
+[[services]]
+name = "Discord Bot"
+
+[services.development]
+run = "pnpm --filter @workspace/discord-bot run dev"
+
+[services.production]
+
+[services.production.run]
+args = ["pnpm", "--filter", "@workspace/discord-bot", "run", "start"]
